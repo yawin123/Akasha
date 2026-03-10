@@ -1,0 +1,9 @@
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/akasha.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/akasha_example.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/akasha_bundle.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/edit_cache.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/rebuild_cache.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/list_install_components.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/install.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/install/local.dir
+/home/malbors/Documentos/megaconfig/build-bundle/CMakeFiles/install/strip.dir
