@@ -1,5 +1,15 @@
 #include "akasha.hpp"
 
+#include <boost/interprocess/offset_ptr.hpp>
+#include <flatbuffers/flexbuffers.h>
+
+namespace {
+
+using AkashaInterprocessTag [[maybe_unused]] = boost::interprocess::offset_ptr<void>;
+using AkashaFlexBuilder [[maybe_unused]] = flexbuffers::Builder;
+
+}  // namespace
+
 namespace akasha {
 
 std::string_view version() noexcept {

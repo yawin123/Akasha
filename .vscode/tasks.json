@@ -1,0 +1,72 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "🧹 Limpiar build",
+            "type": "shell",
+            "command": "rm",
+            "args": [
+                "-rf",
+                "build"
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "detail": "Elimina el directorio build completo"
+        },
+        {
+            "label": "⚙️ Configurar proyecto (Conan + CMake)",
+            "type": "shell",
+            "command": "conan install . --output-folder=build --build=missing -s build_type=Release && cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+            "group": "build",
+            "problemMatcher": [],
+            "dependsOn": ["🧹 Limpiar build"],
+            "detail": "Limpia, instala dependencias con Conan y configura el proyecto con CMake (puede tardar en la primera ejecución)"
+        },
+        {
+            "label": "🔨 Compilar",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build",
+                "-j"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc",
+            "detail": "Compila el proyecto"
+        },
+        {
+            "label": "🪛 Recompilar",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build",
+                "--clean-first",
+                "-j"
+            ],
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "detail": "Limpia y recompila el proyecto completo"
+        },
+        {
+            "label": "🚀 Ejecutar ejemplo",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/akasha_example",
+            "group": "test",
+            "problemMatcher": [],
+            "detail": "Ejecuta el programa de ejemplo",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": false
+            }
+        }
+    ]
+}

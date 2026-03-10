@@ -1,2 +1,0 @@
-/usr/bin/ar qc libakasha.a CMakeFiles/akasha.dir/src/akasha.cpp.o
-/usr/bin/ranlib libakasha.a

@@ -13,7 +13,7 @@ El objetivo principal es que los consumidores de la librería trabajen con una i
 Akasha actúa como una capa de abstracción sobre distintos ficheros de datos. Conceptualmente, puede pensarse como abrir varios documentos tipo JSON y consultar sus claves, pero en este proyecto se empleará:
 
 - **FlexData** como formato/base de datos de entrada.
-- **bootstrap::interprocess** para soportar estrategias de compartición/interacción entre procesos.
+- **Boost.Interprocess** para soportar estrategias de compartición/interacción entre procesos.
 
 La librería debe permitir cargar *N* ficheros de datos y resolver lecturas/escrituras sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento o transporte.
 
@@ -54,7 +54,12 @@ Estructura base actual:
 
 ## Dependencias y empaquetado
 
-La estrategia recomendada es gestionar dependencias con **Git submodules** y enlazarlas de forma `PRIVATE` dentro de Akasha.
+Akasha usa **Conan** para gestionar sus dependencias:
+
+- **Boost 1.90.0** (especialmente `Boost.Interprocess`)
+- **FlatBuffers 25.9.23** (FlexBuffers)
+
+Las dependencias se especifican en `conanfile.py` y se instalan automáticamente via Conan.
 
 En CMake, Akasha expone dos modos:
 
@@ -69,20 +74,28 @@ Opciones disponibles:
 
 ## Compilación
 
+Primero, instala las dependencias con Conan:
+
+```bash
+conan install . --output-folder=build --build=missing
+```
+
 Build normal:
 
 ```bash
-cmake -S . -B build
-cmake --build build
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake
+cmake --build .
 ```
 
 Build con bundle (archivo único):
 
 ```bash
-cmake -S . -B build \
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
 	-DAKASHA_DEP_TARGETS="dep1;dep2" \
 	-DAKASHA_BUILD_SINGLE_ARCHIVE=ON
-cmake --build build --target akasha_bundle
+cmake --build . --target akasha_bundle
 ```
 
 > Nota: el modo `single-archive` usa `ar/ranlib` y está orientado a toolchains tipo GNU/Unix.

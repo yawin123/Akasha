@@ -8,6 +8,10 @@ option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha a
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
 
+# Buscar dependencias de Conan
+find_package(Boost REQUIRED)
+find_package(flatbuffers REQUIRED)
+
 add_library(akasha STATIC
     src/akasha.cpp
 )
@@ -21,6 +25,12 @@ target_include_directories(akasha
 )
 
 target_compile_features(akasha PUBLIC cxx_std_23)
+
+target_link_libraries(akasha 
+    PRIVATE 
+        Boost::boost
+        flatbuffers::flatbuffers
+)
 
 if(AKASHA_DEP_TARGETS)
     target_link_libraries(akasha PRIVATE ${AKASHA_DEP_TARGETS})
