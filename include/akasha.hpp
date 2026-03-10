@@ -13,9 +13,15 @@ namespace akasha {
 
 /**
  * @brief Versión semántica de la librería.
- * @return Vista inmutable con la versión actual.
+ * @return Vista inmutable con la versión actual (desde compilación).
  */
-[[nodiscard]] inline std::string_view version() noexcept { return "0.3.0";}
+[[nodiscard]] inline std::string_view version() noexcept {
+#ifdef AKASHA_VERSION
+	return AKASHA_VERSION;
+#else
+	return "0.0.0-dev";  // fallback si no se compila con CMake
+#endif
+}
 
 /**
  * @brief Ruta jerárquica en notación por puntos.
@@ -57,6 +63,7 @@ enum class LoadStatus {
 	file_read_error,
 	parse_error,
 	unsupported_value_type,
+	source_already_loaded,
 };
 
 /**
@@ -124,17 +131,6 @@ public:
 	using QueryResult = std::variant<ValueView, DatasetView>;
 
 	/**
-	 * @brief Carga o actualiza entradas en el almacén.
-	 *
-	 * Las claves deben ser completas e incluir dataset.
-	 * Si hay error de validación o conflicto, no se aplica ningún cambio.
-	 *
-	 * @param source Colección clave completa -> valor.
-	 * @return Estado de la operación.
-	 */
-	[[nodiscard]] LoadStatus load(const DatasetSource& source);
-
-	/**
 	 * @brief Carga configuración desde un archivo FlexBuffers.
 	 *
 	 * Formato esperado:
@@ -142,11 +138,18 @@ public:
 	 * - Hojas de tipo bool, int, uint, double o string.
 	 * - Se admiten mapas anidados, que se convierten a KeyPath con dot notation.
 	 * - Los valores no se copian: se mantienen referencias al fichero mapeado.
+	 * - Si la fuente ya existe (mismo source_id), devuelve error `source_already_loaded`.
 	 *
+	 * @param source_id Identificador único de la fuente (idéntico al nombre del archivo).
 	 * @param file_path Ruta del archivo FlexBuffers.
+	 * @param create_if_missing Si es true y el archivo no existe, crea uno vacío (mapa raíz vacío).
 	 * @return Estado de la operación de carga/parseo.
 	 */
-	[[nodiscard]] LoadStatus load_flexbuffer_file(std::string_view file_path);
+	[[nodiscard]] LoadStatus load(
+		std::string_view source_id,
+		std::string_view file_path,
+		bool create_if_missing = false
+	);
 
 	/**
 	 * @brief Indica si existe una ruta completa.
@@ -171,10 +174,16 @@ private:
 		std::unordered_map<std::string, Node> children;
 	};
 
+	struct Source {
+		std::string id;
+		Node root;
+	};
+
 	[[nodiscard]] static bool split_key_path(std::string_view key_path, std::vector<std::string_view>& segments);
 	[[nodiscard]] static std::optional<QueryResult> get_from_node(const Node& base, std::string_view key_path);
+	[[nodiscard]] std::pair<Node*, LoadStatus> get_or_create_source(std::string_view source_id);
 
-	Node root_;
+	std::vector<Source> sources_;
 };
 
 }  // namespace akasha

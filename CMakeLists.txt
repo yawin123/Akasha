@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 0.3.0 LANGUAGES CXX)
+project(Akasha VERSION 0.4.0 LANGUAGES CXX)
 
 option(BUILD_EXAMPLE "Build example application" ON)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
@@ -25,6 +25,11 @@ target_include_directories(akasha
 )
 
 target_compile_features(akasha PUBLIC cxx_std_23)
+
+target_compile_definitions(akasha
+    PUBLIC
+        AKASHA_VERSION="${CMAKE_PROJECT_VERSION}"
+)
 
 target_link_libraries(akasha 
     PRIVATE 

@@ -20,16 +20,20 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - Evitar copias completas del dataset mapeado hacia estructuras espejo en memoria del proceso.
 - Evitar cambios de API incompatibles a partir de 0.9.0.
 
-## Estado actual (0.3.0 completado)
+## Estado actual (0.4.0 completado)
 
 - Librería estática compilando con CMake.
+- Versión obtenida desde CMake (`AKASHA_VERSION` macro configurada en compilación).
 - Dependencias integradas con Conan (Boost + FlatBuffers).
 - API core implementada con `Store`, `DatasetView`, `load`, `has`, `get` y notación por puntos.
-- Ejemplo funcional consultando valores y subárboles.
-- Carga desde fichero FlexBuffers implementada con `Boost.Interprocess` (`file_mapping` + `mapped_region`) en modo lectura.
-- Resolución de consultas sobre referencias a memoria mapeada (sin materializar valores hoja en un contenedor separado).
-- Soporte completo de escalares: bool, int64, uint64, double, string (zero-copy para strings).
-- Próximo foco: 0.4.0 (fusión de múltiples fuentes) o 0.5.0 (persistencia con redimensionado dinámico).
+- Solo carga FlexBuffers (sin `load()` para `DatasetSource` en memoria).
+- Cada dataset se identifica por `source_id`; duplicados rechazados con `source_already_loaded`.
+- Claves siempre calificadas por dataset (`dataset.algo...`).
+- `get`/`has` no hacen búsqueda cross-dataset: si el dataset no existe, devuelven `std::nullopt`/`false`.
+- Flag `create_if_missing` opcional: si true, crea archivo vacío (mapa raíz vacío) si no existe.
+- Soporte completo de escalares: bool, int64, uint64, double, string.
+- Ejemplo funcional demostrando claves calificadas, duplicados y creación de archivos.
+- Próximo foco: 0.5.0 (escritura con redimensionado dinámico) o 0.6.0 (interproceso).
 
 ## Hitos por versión
 
@@ -101,19 +105,38 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 ## 0.4.0 — Fusión de múltiples fuentes
 
-**Meta:** resolver conflictos y precedencia entre datasets.
+**Meta:** consolidar carga multi-dataset con claves calificadas y aislamiento por dataset.
 
 **Entregables:**
 
-- Política de merge configurable (por defecto: último gana).
-- Consulta agregada sobre varios datasets.
-- Definición de orden de prioridad por dataset.
+- API única de carga FlexBuffers: `load(source_id, path, create_if_missing=false)`.
+- Namespace explícito por dataset en todas las claves (`source_id.algo...`).
+- Rechazo de duplicados por `source_id` (`source_already_loaded`).
+- Consulta estricta por dataset en `get`/`has`.
 - Tests de conflicto y precedencia.
 
 **Done cuando:**
 
-- El usuario puede consultar una “vista unificada” de varias fuentes.
+- El usuario consulta siempre con dataset explícito (`dataset.key...`).
+- Duplicados rechazados con error claro.
+- Versión y carga sincronizadas con CMake.
 
+**Estado:** completado.
+
+**Completado:**
+
+- API simplificada: `load(source_id, path, create_if_missing=false)`.
+- Validación: source_id único (error si ya existe).
+- Claves almacenadas bajo namespace del dataset (`source_id`).
+- Consultas `get`/`has` resuelven únicamente dentro del dataset indicado en la clave.
+- Creación de archivo vacío si no existe y `create_if_missing=true`.
+- Versión desde CMake: macro `AKASHA_VERSION` pasada en compilación.
+- Ejemplo demuestra duplicados rechazados, crear archivos, y `nullopt` para claves no calificadas.
+
+**Notas de alcance:**
+
+- Por decisión de alcance, tests se difieren a hitos posteriores.
+- La resolución cross-dataset no forma parte de 0.4.0 por diseño (aislamiento por dataset).
 ## 0.5.0 — Escritura controlada y persistencia
 
 **Meta:** permitir actualizaciones seguras de valores.
@@ -219,8 +242,8 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 ## Orden recomendado de ejecución inmediata
 
-1. Cerrar 0.3.0 (fixtures + validación fina de errores en carga FlexBuffers por mapeo).
-2. Implementar 0.4.0 (merge + precedencia).
-3. Diseñar e implementar 0.5.0 con redimensionado dinámico seguro de archivos mapeados.
+1. Implementar 0.5.0 (escritura + persistencia + redimensionado dinámico seguro).
+2. Implementar 0.6.0 (base interproceso y coordinación de remapeo).
+3. Reforzar 0.9.0 (tests de endurecimiento y benchmarks básicos).
 
-Con esos tres hitos, Akasha ya tendría una propuesta de valor usable y medible.
+Con esos tres hitos, Akasha consolidará una propuesta de valor usable y lista para estabilización.

@@ -5,6 +5,7 @@
 #include <boost/interprocess/offset_ptr.hpp>
 #include <flatbuffers/flexbuffers.h>
 
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <type_traits>
@@ -139,41 +140,40 @@ std::optional<Store::QueryResult> Store::get_from_node(const Node& base, std::st
     return DatasetView{current};
 }
 
-LoadStatus Store::load(const DatasetSource& source) {
-    Node draft = root_;
+std::pair<Store::Node*, LoadStatus> Store::get_or_create_source(std::string_view source_id) {
+    // Validar que no existe
+    auto it = std::find_if(sources_.begin(), sources_.end(), [source_id](const Source& s) {
+        return s.id == source_id;
+    });
 
-    std::vector<std::string_view> segments;
-    for (const auto& [key_path, value] : source) {
-        if (!split_key_path(key_path, segments) || segments.size() < 2) {
-            return LoadStatus::invalid_key_path;
-        }
-
-        Node* current = &draft;
-        for (const std::string_view segment : segments) {
-            if (current->value.has_value() || current->mapped_value.has_value()) {
-                return LoadStatus::key_conflict;
-            }
-
-            auto [iterator, inserted] = current->children.try_emplace(std::string{segment});
-            (void)inserted;
-            current = &iterator->second;
-        }
-
-        if (!current->children.empty()) {
-            return LoadStatus::key_conflict;
-        }
-
-        current->value = value;
-        current->mapped_value.reset();
+    if (it != sources_.end()) {
+        return {nullptr, LoadStatus::source_already_loaded};
     }
 
-    root_ = std::move(draft);
-    return LoadStatus::ok;
+    // Crear nueva source
+    sources_.push_back(Source{std::string{source_id}, Node{}});
+
+    // Encontrar la source recién creada
+    it = std::find_if(sources_.begin(), sources_.end(), [source_id](const Source& s) {
+        return s.id == source_id;
+    });
+
+    return {&it->root, LoadStatus::ok};
 }
 
-LoadStatus Store::load_flexbuffer_file(std::string_view file_path) {
+LoadStatus Store::load(std::string_view source_id, std::string_view file_path, bool create_if_missing) {
+    if (source_id.empty()) {
+        return LoadStatus::invalid_key_path;
+    }
+
     if (file_path.empty()) {
         return LoadStatus::file_read_error;
+    }
+
+    auto [target_root, create_status] = get_or_create_source(source_id);
+    
+    if (create_status != LoadStatus::ok) {
+        return create_status;  // source_already_loaded
     }
 
     const std::string path{file_path};
@@ -182,7 +182,14 @@ LoadStatus Store::load_flexbuffer_file(std::string_view file_path) {
         auto storage = std::make_shared<MappedFileStorage>(path);
 
         if (storage->region.get_address() == nullptr) {
-            return LoadStatus::file_read_error;
+            // Archivo no existe
+            if (!create_if_missing) {
+                return LoadStatus::file_read_error;
+            }
+            // Crear archivo vacío (mapa raíz vacío) bajo el dataset source_id
+            *target_root = Node{};
+            target_root->children.try_emplace(std::string{source_id});
+            return LoadStatus::ok;
         }
 
         if (storage->region.get_size() < 3) {
@@ -195,7 +202,12 @@ LoadStatus Store::load_flexbuffer_file(std::string_view file_path) {
             return LoadStatus::parse_error;
         }
 
-        Node draft = root_;
+        Node draft = *target_root;
+        
+        // Create a top-level node for this source_id
+        auto [source_node_it, inserted] = draft.children.try_emplace(std::string(source_id));
+        (void)inserted;
+        
         std::vector<std::string> path_segments;
 
         std::function<LoadStatus(Node&, const flexbuffers::Reference&)> ingest_reference;
@@ -220,8 +232,8 @@ LoadStatus Store::load_flexbuffer_file(std::string_view file_path) {
                     }
 
                     path_segments.emplace_back(key_view);
-                    auto [iterator, inserted] = current.children.try_emplace(std::string{key_view});
-                    (void)inserted;
+                    auto [iterator, inserted2] = current.children.try_emplace(std::string{key_view});
+                    (void)inserted2;
 
                     const LoadStatus child_status = ingest_reference(iterator->second, values[index]);
                     path_segments.pop_back();
@@ -233,7 +245,8 @@ LoadStatus Store::load_flexbuffer_file(std::string_view file_path) {
                 return LoadStatus::ok;
             }
 
-            if (path_segments.size() < 2) {
+            // Require at least one key under the source_id
+            if (path_segments.empty()) {
                 return LoadStatus::invalid_key_path;
             }
 
@@ -246,18 +259,25 @@ LoadStatus Store::load_flexbuffer_file(std::string_view file_path) {
             }
 
             current.value.reset();
+            // Store path_segments WITHOUT source_id (it's implicit from the tree structure)
             current.mapped_value = MappedValueRef{storage, path_segments};
             return LoadStatus::ok;
         };
 
-        const LoadStatus parse_status = ingest_reference(draft, root);
+        const LoadStatus parse_status = ingest_reference(source_node_it->second, root);
         if (parse_status != LoadStatus::ok) {
             return parse_status;
         }
 
-        root_ = std::move(draft);
+        *target_root = std::move(draft);
         return LoadStatus::ok;
     } catch (const boost::interprocess::interprocess_exception&) {
+        if (create_if_missing) {
+            // Archivo no existe, crear vacío
+            *target_root = Node{};
+            target_root->children.try_emplace(std::string{source_id});
+            return LoadStatus::ok;
+        }
         return LoadStatus::file_read_error;
     }
 }
@@ -267,7 +287,21 @@ bool Store::has(std::string_view key_path) const {
 }
 
 std::optional<Store::QueryResult> Store::get(std::string_view key_path) const {
-    return get_from_node(root_, key_path);
+    std::vector<std::string_view> segments;
+    if (!split_key_path(key_path, segments) || segments.empty()) {
+        return std::nullopt;
+    }
+
+    const std::string_view dataset_id = segments.front();
+    auto source_it = std::find_if(sources_.begin(), sources_.end(), [dataset_id](const Source& source) {
+        return source.id == dataset_id;
+    });
+
+    if (source_it == sources_.end()) {
+        return std::nullopt;
+    }
+
+    return get_from_node(source_it->root, key_path);
 }
 
 bool Store::DatasetView::has(std::string_view key_path) const {

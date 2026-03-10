@@ -12,28 +12,41 @@ El objetivo principal es que los consumidores de la librería trabajen con una i
 
 Akasha actúa como una capa de abstracción sobre distintos ficheros de datos. Conceptualmente, puede pensarse como abrir varios documentos tipo JSON y consultar sus claves, pero en este proyecto se empleará:
 
-- **FlexData** como formato/base de datos de entrada.
+- **FlexBuffers** como formato de entrada.
 - **Boost.Interprocess** para soportar estrategias de compartición/interacción entre procesos.
 
-La librería debe permitir cargar *N* ficheros de datos y resolver lecturas/escrituras sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento o transporte.
+La librería permite cargar *N* ficheros de datos y resolver lecturas sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento.
 
 ## Modelo de acceso
 
-El acceso está diseñado para ser transparente y consistente usando claves completas en dot notation.
+El acceso usa claves completas en dot notation y **siempre calificadas por dataset**.
 
-Las claves soportan notación jerárquica por segmentos (dot notation), por ejemplo:
+### Reglas de clave
 
-- `core.timeout` → dataset `core`, clave `timeout`.
-- `core.settings.timeout` → dataset `core`, clave jerárquica `settings.timeout`.
+- Formato mínimo: `dataset.algo`.
+- El primer segmento identifica el dataset cargado con `load(source_id, ...)`.
+- No hay búsqueda cross-dataset: si el dataset no existe, `get(...)` devuelve `nullopt`.
 
-Las claves válidas deben tener al menos dos segmentos (`algo.algo`), para evitar valores sin dataset.
+Ejemplos:
 
-En la API, `get(path)` devuelve un `optional` que puede contener:
+- `user.core.timeout`
+- `defaults.core.settings.enabled`
+- `user.service.host`
 
-- un **valor** (si `path` apunta a hoja), o
-- un **subconjunto/dataset view** (si `path` apunta a un nodo intermedio, como `core` o `core.settings`).
+### API actual de carga y consulta
 
-Este enfoque simplifica la organización de datos complejos y mantiene una API intuitiva para los usuarios de la librería.
+- `load(source_id, file_path, create_if_missing = false)`
+	- Carga un archivo FlexBuffers bajo el namespace `source_id`.
+	- Si `source_id` ya está cargado, devuelve `source_already_loaded`.
+	- Si el archivo no existe:
+		- `create_if_missing = false` → `file_read_error`
+		- `create_if_missing = true` → crea dataset vacío.
+- `get(key_path)` devuelve:
+	- `std::nullopt` si no existe,
+	- `ValueView` si apunta a hoja,
+	- `DatasetView` si apunta a nodo intermedio (por ejemplo `user.core.settings`).
+
+Este enfoque evita ambigüedad entre fuentes y garantiza resolución determinista por dataset.
 
 ## ¿Por qué el nombre Akasha?
 
