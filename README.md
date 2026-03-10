@@ -4,8 +4,8 @@ Akasha es una librería C++23 orientada a la gestión de datos configurables y e
 
 El objetivo principal es que los consumidores de la librería trabajen con una interfaz simple basada en tres conceptos:
 
-- **Set de datos**: conjunto lógico que agrupa información cargada desde un fichero.
-- **Clave**: identificador del dato dentro de un set.
+- **Set de datos**: viene implícito en el primer segmento de la clave.
+- **Clave**: identificador jerárquico con formato mínimo `dataset.algo`.
 - **Valor**: contenido asociado a la clave.
 
 ## Visión del proyecto
@@ -19,13 +19,19 @@ La librería debe permitir cargar *N* ficheros de datos y resolver lecturas/escr
 
 ## Modelo de acceso
 
-El acceso está diseñado para ser transparente y consistente, utilizando la semántica:
+El acceso está diseñado para ser transparente y consistente usando claves completas en dot notation.
 
-`set de datos` + `clave` + `valor`
+Las claves soportan notación jerárquica por segmentos (dot notation), por ejemplo:
 
-Además, las claves soportan notación jerárquica por segmentos (dot notation), por ejemplo:
+- `core.timeout` → dataset `core`, clave `timeout`.
+- `core.settings.timeout` → dataset `core`, clave jerárquica `settings.timeout`.
 
-- `core.timeout` → clave `timeout` dentro del grupo `core`.
+Las claves válidas deben tener al menos dos segmentos (`algo.algo`), para evitar valores sin dataset.
+
+En la API, `get(path)` devuelve un `optional` que puede contener:
+
+- un **valor** (si `path` apunta a hoja), o
+- un **subconjunto/dataset view** (si `path` apunta a un nodo intermedio, como `core` o `core.settings`).
 
 Este enfoque simplifica la organización de datos complejos y mantiene una API intuitiva para los usuarios de la librería.
 

@@ -64,7 +64,7 @@
                 "reveal": "always",
                 "focus": true,
                 "panel": "shared",
-                "showReuseMessage": false,
+                "showReuseMessage": true,
                 "clear": false
             }
         }
