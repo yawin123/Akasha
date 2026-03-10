@@ -73,28 +73,15 @@ size_t test1(akasha::Store& store)
 
         std::uint64_t value_to_store = initial_value;
         if (counter > 1) {
-            const auto last_entry = store.get(last_key);
-            if (!last_entry.has_value()) {
+            const auto last_value = store.get<std::uint64_t>(last_key);
+            if (!last_value.has_value()) {
                 std::cerr << "get failed for last_key: " << last_key << '\n';
                 return 1;
             }
-
-            const auto* last_value = std::get_if<akasha::ValueView>(&*last_entry);
-            if (last_value == nullptr) {
-                std::cerr << "get failed: last_key is not a scalar value\n";
-                return 1;
-            }
-
-            const auto* last_uint = std::get_if<std::uint64_t>(last_value);
-            if (last_uint == nullptr) {
-                std::cerr << "get failed: last_key is not uint64\n";
-                return 1;
-            }
-
-            value_to_store = *last_uint;
+            value_to_store = *last_value;
         }
 
-        const akasha::WriteStatus set_status = store.set(actual_key, value_to_store);
+        const akasha::WriteStatus set_status = store.set<std::uint64_t>(actual_key, value_to_store);
         if (set_status != akasha::WriteStatus::ok) {
             std::cerr << "set failed with status: " << static_cast<int>(set_status) << '\n';
             return 1;
@@ -125,7 +112,7 @@ size_t test2(akasha::Store& store)
             ++local_counter;
             const std::string key = prefix + "." + std::to_string(local_counter);
 
-            const akasha::WriteStatus set_status = store.set(key, local_counter);
+            const akasha::WriteStatus set_status = store.set<std::uint64_t>(key, local_counter);
             if (set_status != akasha::WriteStatus::ok) {
                 std::cerr << "set failed in thread for prefix " << prefix
                           << " with status: " << static_cast<int>(set_status) << '\n';
@@ -167,7 +154,7 @@ size_t test3(akasha::Store& store)
         keys.push_back("test.3.rand." + std::to_string(index));
         expected_values.push_back(value_dist(rng));
 
-        const akasha::WriteStatus set_status = store.set(keys.back(), expected_values.back());
+        const akasha::WriteStatus set_status = store.set<std::uint64_t>(keys.back(), expected_values.back());
         if (set_status != akasha::WriteStatus::ok) {
             std::cerr << "set failed in test3 init with status: " << static_cast<int>(set_status) << '\n';
             return static_cast<size_t>(-1);
@@ -180,22 +167,12 @@ size_t test3(akasha::Store& store)
 
     while (std::chrono::steady_clock::now() <= end_time) {
         const std::size_t index = key_index_dist(rng);
-        const auto entry = store.get(keys[index]);
-        if (!entry.has_value()) {
+        const auto value = store.get<std::uint64_t>(keys[index]);
+        if (!value.has_value()) {
             continue;
         }
 
-        const auto* value = std::get_if<akasha::ValueView>(&*entry);
-        if (value == nullptr) {
-            continue;
-        }
-
-        const auto* uint_value = std::get_if<std::uint64_t>(value);
-        if (uint_value == nullptr) {
-            continue;
-        }
-
-        if (*uint_value == expected_values[index]) {
+        if (*value == expected_values[index]) {
             ++success_counter;
         }
     }
@@ -205,6 +182,12 @@ size_t test3(akasha::Store& store)
 
 int main() {
     akasha::Store store;
+
+    akasha::PerformanceTuning tuning;
+    tuning.initial_mapped_file_size = 64 * 1024;
+    tuning.initial_grow_step = tuning.initial_mapped_file_size / 2;
+    tuning.max_grow_retries = 8;
+    store.set_performance_tuning(tuning);
 
     std::string file_path = "build/test_loop.mmap";
     std::filesystem::remove(file_path);  // Limpiar archivo previo para pruebas consistentes
@@ -223,6 +206,9 @@ int main() {
 
     const size_t total_hits_test3 = test3(store);
     std::cout << "Total entries readed (test3): " << total_hits_test3 << '\n';
+
+    const akasha::WriteStatus compact_status = store.compact("test");
+    std::cout << "Compact status: " << static_cast<int>(compact_status) << '\n';
 
     return 0;
 }

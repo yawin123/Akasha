@@ -8,7 +8,7 @@ Entregar una librería C++23 estable para cargar múltiples fuentes de configura
 - clave (con dot notation)
 - valor
 
-Con soporte de uso embebido (misma aplicación) y una base sólida para escenarios interproceso con Boost.Interprocess.
+Con soporte de uso embebido (misma aplicación), priorizando latencia baja y persistencia directa para almacenamiento rápido.
 
 ## Principios de evolución
 
@@ -20,7 +20,7 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - Evitar copias completas del dataset mapeado hacia estructuras espejo en memoria del proceso.
 - Evitar cambios de API incompatibles a partir de 0.9.0.
 
-## Estado actual (0.5.0)
+## Estado actual (0.6.0)
 
 - Librería estática compilando con CMake.
 - Versión obtenida desde CMake (`AKASHA_VERSION` macro configurada en compilación).
@@ -37,8 +37,11 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - API de limpieza `clear(key_path={})` con borrado total/dataset/prefijo.
 - Reset determinista al tamaño inicial del archivo en limpiezas completas.
 - Concurrencia local por hilo con `std::shared_mutex` por fichero.
-- Ejemplo funcional validando round-trip y escenarios multihilo locales.
-- Foco activo: 0.6.0 (sincronización y garantías interproceso).
+- **Tuning configurable**: `set_performance_tuning()` para inicial_size, grow_step, max_retries.
+- **Compactación explícita**: `compact(dataset_id={})` para optimizar archivos bajo demanda.
+- **Helpers template ergonómicos**: `get<T>(clave)` y `set<T>(clave, valor)` para acceso type-safe.
+- Ejemplo funcional validando round-trip, multihilo y operaciones de 0.6.0.
+- Foco activo: 0.7.0 (modelo de errores y observabilidad).
 
 ## Hitos por versión
 
@@ -176,23 +179,36 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - Concurrencia local por hilos con bloqueos por fichero (`shared_mutex`).
 - Ejemplo actualizado con validaciones de round-trip y escenarios de acceso concurrente local.
 
-## 0.6.0 — Base interproceso (MVP)
+## 0.6.0 — Rendimiento y robustez local (MVP)
 
-**Meta:** preparar uso compartido entre procesos.
+**Meta:** maximizar rendimiento en proceso único sin complicar la API pública.
 
 **Entregables:**
 
-- Abstracción de backend de almacenamiento (in-memory vs shared-memory).
-- Prototipo funcional con Boost.Interprocess para lectura compartida.
-- Coordinación de remapeo entre procesos (estrategia de sincronización y visibilidad tras resize).
-- Reglas de ownership y ciclo de vida documentadas.
-- Tests básicos de lectura desde proceso secundario.
+- Ajustes de hot path en `set/get` para reducir asignaciones y trabajo redundante.
+- Política de crecimiento configurable (tamaño inicial, paso de grow, reintentos máximos).
+- API de mantenimiento para compactación explícita bajo demanda (sin trabajo en background).
+- Helpers template para acceso type-safe: `get<T>()` y `set<T>()`.
+- Abstracción de parámetros de rendimiento sin mezclar con datos de usuario.
 
 **Done cuando:**
 
-- Existe al menos un escenario reproducible de lectura interproceso.
+- Se observa mejora medible de rendimiento en escenarios representativos.
+- La compactación y la política de crecimiento son configurables sin romper la API actual.
+- Los helpers template ofrecen alternativa type-safe sin casting manual.
 
-## 0.7.0 — Modelo de errores y observabilidad
+**Estado:** completado.
+
+**Completado:**
+
+- `PerformanceTuning` struct con parámetros configurables: initial_size, grow_step, max_retries.
+- Método `set_performance_tuning(tuning)` y `performance_tuning()` getter.
+- Método `compact(dataset_id={})` para compactación explícita (full si vacío, de dataset si especificado).
+- Template `get<T>(key_path)` → `std::optional<T>` con extracción type-safe.
+- Template `set<T>(key_path, value)` para escritura type-safe sin casting.
+- Ejemplo actualizado: demo de helpers, tests con get<T>/set<T> simplificados.
+- Compilación limpia, ejecución funcional sin overhead de estadísticas/métricas.
+- **Política:** Sin trackers/stats internos; librería almacena solo datos de usuario.
 
 **Meta:** mejorar diagnósticos y soporte de operación.
 
@@ -263,8 +279,8 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 ## Orden recomendado de ejecución inmediata
 
-1. Implementar 0.5.0 (escritura + persistencia + redimensionado dinámico seguro).
-2. Implementar 0.6.0 (base interproceso y coordinación de remapeo).
-3. Reforzar 0.9.0 (tests de endurecimiento y benchmarks básicos).
+1. Refinar 0.7.0 (modelo de errores y observabilidad).
+2. Reforzar 0.8.0 (empaquetado y DX de integración).
+3. Reforzar 0.9.0 (tests de endurecimiento).
 
-Con esos tres hitos, Akasha consolidará una propuesta de valor usable y lista para estabilización.
+Con esos tres hitos, Akasha consolida una propuesta de valor rápida, integrable y lista para estabilización.

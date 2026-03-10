@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <mutex>
+#include <atomic>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
@@ -76,6 +78,12 @@ enum class WriteStatus {
 	key_conflict,
 	dataset_not_found,
 	file_write_error,
+};
+
+struct PerformanceTuning {
+	std::size_t initial_mapped_file_size{64 * 1024};
+	std::size_t initial_grow_step{(64 * 1024) / 2};
+	int max_grow_retries{8};
 };
 
 /**
@@ -170,6 +178,16 @@ public:
 	[[nodiscard]] WriteStatus set(std::string_view key_path, const Value& value);
 
 	/**
+	 * @brief Ajusta parámetros de rendimiento local para nuevos crecimientos/creaciones.
+	 */
+	void set_performance_tuning(const PerformanceTuning& tuning) noexcept;
+
+	/**
+	 * @brief Obtiene la configuración de rendimiento actual.
+	 */
+	[[nodiscard]] PerformanceTuning performance_tuning() const noexcept;
+
+	/**
 	 * @brief Elimina datos persistidos.
 	 *
 	 * - Si key_path está vacío, elimina todos los datos de todos los datasets cargados.
@@ -177,6 +195,14 @@ public:
 	 * - Si key_path incluye subclave (p.ej. "user.core"), elimina esa clave y todo su subárbol.
 	 */
 	[[nodiscard]] WriteStatus clear(std::string_view key_path = {});
+
+	/**
+	 * @brief Compacta el archivo mapeado para un dataset o para todos.
+	 *
+	 * - Si dataset_id está vacío, compacta todos los archivos de datasets cargados.
+	 * - Si dataset_id existe, compacta solo su archivo asociado.
+	 */
+	[[nodiscard]] WriteStatus compact(std::string_view dataset_id = {});
 
 	/**
 	 * @brief Indica si existe una ruta completa.
@@ -194,6 +220,68 @@ public:
 	 */
 	[[nodiscard]] std::optional<QueryResult> get(std::string_view key_path) const;
 
+	/**
+	 * @brief Obtiene un valor tipado de forma segura.
+	 *
+	 * Realiza un `get()` normal y extrae el tipo T esperado.
+	 * Si el valor no existe o tiene tipo diferente, devuelve std::nullopt.
+	 *
+	 * Tipos soportados: bool, int64_t, uint64_t, double, std::string_view.
+	 *
+	 * @param key_path Ruta completa de la clave (incluye dataset).
+	 * @return std::optional<T> con el valor tipado, o std::nullopt si no existe o tipo no coincide.
+	 */
+	template<typename T>
+	[[nodiscard]] std::optional<T> get(std::string_view key_path) const {
+		const auto result = this->Store::get(key_path);
+		if (!result.has_value()) {
+			return std::nullopt;
+		}
+
+		const auto* value_view = std::get_if<ValueView>(&*result);
+		if (value_view == nullptr) {
+			return std::nullopt;
+		}
+
+		const auto* typed_value = std::get_if<T>(value_view);
+		if (typed_value == nullptr) {
+			return std::nullopt;
+		}
+
+		return *typed_value;
+	}
+
+	/**
+	 * @brief Establece un valor con un tipo específico.
+	 *
+	 * Simplifica la creación de Value a partir de un tipo T.
+	 * La actualización se registra en las métricas como un `set()` normal.
+	 *
+	 * Tipos soportados: bool, int64_t, uint64_t, double, std::string, std::string_view.
+	 *
+	 * @param key_path Ruta completa de la clave (incluye dataset).
+	 * @param value Valor tipado a persistir.
+	 * @return WriteStatus de la operación.
+	 */
+	template<typename T>
+	[[nodiscard]] WriteStatus set(std::string_view key_path, const T& value) {
+		// Construir Value genérico según el tipo
+		if constexpr (std::is_same_v<T, std::string_view>) {
+			return this->Store::set(key_path, Value{std::string{value}});
+		} else if constexpr (std::is_same_v<T, const char*>) {
+			return this->Store::set(key_path, Value{std::string{value}});
+		} else if constexpr (std::is_same_v<T, bool> ||
+							  std::is_same_v<T, std::int64_t> ||
+							  std::is_same_v<T, std::uint64_t> ||
+							  std::is_same_v<T, double> ||
+							  std::is_same_v<T, std::string>) {
+			return this->Store::set(key_path, Value{value});
+		} else {
+			// Tipo no soportado: compilación fallará si se intenta usar
+			static_assert(false, "Unsupported type for akasha::Store::set<T>()");
+		}
+	}
+
 private:
 	struct Source {
 		std::string id;
@@ -209,11 +297,15 @@ private:
 	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
 	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
 	[[nodiscard]] bool shrink_and_remap_sources_for_path(const std::string& file_path);
+	[[nodiscard]] bool compact_and_remap_sources_for_path(const std::string& file_path);
 
 	std::vector<Source> sources_;
 	mutable std::shared_mutex sources_mutex_;
 	mutable std::mutex file_locks_mutex_;
 	mutable std::unordered_map<std::string, std::shared_ptr<std::shared_mutex>> file_locks_;
+	std::atomic<std::size_t> initial_mapped_file_size_{64 * 1024};
+	std::atomic<std::size_t> initial_grow_step_{(64 * 1024) / 2};
+	std::atomic<int> max_grow_retries_{8};
 };
 
 }  // namespace akasha

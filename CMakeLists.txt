@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 0.5.0 LANGUAGES CXX)
+project(Akasha VERSION 0.6.0 LANGUAGES CXX)
 
 option(BUILD_EXAMPLE "Build example application" ON)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)

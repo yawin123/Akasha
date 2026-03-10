@@ -12,8 +12,8 @@ El objetivo principal es que los consumidores de la librería trabajen con una i
 
 Akasha actúa como una capa de abstracción sobre distintos ficheros de datos. Conceptualmente, puede pensarse como abrir varios documentos tipo JSON y consultar sus claves, pero en este proyecto se empleará:
 
-- **Boost.Interprocess managed_mapped_file** como backend de almacenamiento persistente.
-- **Boost.Interprocess** para soportar estrategias de compartición/interacción entre procesos.
+- **Boost.Interprocess managed_mapped_file** como backend de almacenamiento persistente de baja latencia.
+- Un modelo de uso **embebido en proceso único**, enfocado en operaciones rápidas de lectura/escritura.
 
 La librería permite cargar *N* ficheros de datos y resolver lecturas sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento.
 

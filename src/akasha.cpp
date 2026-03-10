@@ -155,9 +155,9 @@ using MapAllocator = bip::allocator<std::pair<const InterprocessString, Interpro
 using InterprocessDatasetMap = bip::map<InterprocessString, InterprocessValue, InterprocessStringLess, MapAllocator>;
 
 constexpr const char* kDatasetMapName = "akasha_root";
-constexpr std::size_t kInitialMappedFileSize = 64 * 1024;
-constexpr std::size_t kInitialGrowStep = kInitialMappedFileSize / 2;
-constexpr int kMaxGrowRetries = 8;
+constexpr std::size_t kDefaultInitialMappedFileSize = 64 * 1024;
+constexpr std::size_t kDefaultInitialGrowStep = kDefaultInitialMappedFileSize / 2;
+constexpr int kDefaultMaxGrowRetries = 8;
 
 [[nodiscard]] std::optional<akasha::ValueView> make_value_view(const akasha::Value& value) {
     return std::visit(
@@ -178,7 +178,7 @@ constexpr int kMaxGrowRetries = 8;
 namespace akasha {
 
 struct Store::MappedFileStorage {
-    explicit MappedFileStorage(const std::string& path, std::size_t initial_size = kInitialMappedFileSize)
+    explicit MappedFileStorage(const std::string& path, std::size_t initial_size)
         : file(bip::open_or_create, path.c_str(), initial_size) {
     }
 
@@ -216,6 +216,32 @@ bool Store::split_key_path(std::string_view key_path, std::vector<std::string_vi
     }
 
     return false;
+}
+
+void Store::set_performance_tuning(const PerformanceTuning& tuning) noexcept {
+    const std::size_t next_initial_size = tuning.initial_mapped_file_size == 0
+        ? kDefaultInitialMappedFileSize
+        : tuning.initial_mapped_file_size;
+
+    const std::size_t next_grow_step = tuning.initial_grow_step == 0
+        ? kDefaultInitialGrowStep
+        : tuning.initial_grow_step;
+
+    const int next_max_retries = tuning.max_grow_retries <= 0
+        ? kDefaultMaxGrowRetries
+        : tuning.max_grow_retries;
+
+    initial_mapped_file_size_.store(next_initial_size, std::memory_order_relaxed);
+    initial_grow_step_.store(next_grow_step, std::memory_order_relaxed);
+    max_grow_retries_.store(next_max_retries, std::memory_order_relaxed);
+}
+
+PerformanceTuning Store::performance_tuning() const noexcept {
+    PerformanceTuning tuning;
+    tuning.initial_mapped_file_size = initial_mapped_file_size_.load(std::memory_order_relaxed);
+    tuning.initial_grow_step = initial_grow_step_.load(std::memory_order_relaxed);
+    tuning.max_grow_retries = max_grow_retries_.load(std::memory_order_relaxed);
+    return tuning;
 }
 
 Store::Source* Store::find_source(std::string_view source_id) {
@@ -285,7 +311,10 @@ bool Store::grow_and_remap_sources_for_path(const std::string& file_path, std::s
 
     for (const std::size_t index : affected_indexes) {
         try {
-            auto storage = std::make_shared<MappedFileStorage>(file_path);
+            auto storage = std::make_shared<MappedFileStorage>(
+                file_path,
+                initial_mapped_file_size_.load(std::memory_order_relaxed)
+            );
             const auto found = storage->file.find<InterprocessDatasetMap>(kDatasetMapName);
             if (found.first == nullptr) {
                 return false;
@@ -331,7 +360,10 @@ bool Store::shrink_and_remap_sources_for_path(const std::string& file_path) {
 
     for (const std::size_t index : affected_indexes) {
         try {
-            auto storage = std::make_shared<MappedFileStorage>(file_path, kInitialMappedFileSize);
+            auto storage = std::make_shared<MappedFileStorage>(
+                file_path,
+                initial_mapped_file_size_.load(std::memory_order_relaxed)
+            );
             auto* dataset_map = storage->file.find_or_construct<InterprocessDatasetMap>(
                 kDatasetMapName
             )(storage->file.get_segment_manager());
@@ -342,6 +374,57 @@ bool Store::shrink_and_remap_sources_for_path(const std::string& file_path) {
 
             sources_[index].storage = std::move(storage);
             sources_[index].dataset_map = dataset_map;
+        } catch (...) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool Store::compact_and_remap_sources_for_path(const std::string& file_path) {
+    if (file_path.empty()) {
+        return false;
+    }
+
+    std::vector<std::size_t> affected_indexes;
+    affected_indexes.reserve(sources_.size());
+    for (std::size_t index = 0; index < sources_.size(); ++index) {
+        if (sources_[index].file_path == file_path) {
+            affected_indexes.push_back(index);
+        }
+    }
+
+    if (affected_indexes.empty()) {
+        return false;
+    }
+
+    for (const std::size_t index : affected_indexes) {
+        sources_[index].dataset_map = nullptr;
+        sources_[index].storage.reset();
+    }
+
+    try {
+        if (!bip::managed_mapped_file::shrink_to_fit(file_path.c_str())) {
+            return false;
+        }
+    } catch (...) {
+        return false;
+    }
+
+    for (const std::size_t index : affected_indexes) {
+        try {
+            auto storage = std::make_shared<MappedFileStorage>(
+                file_path,
+                initial_mapped_file_size_.load(std::memory_order_relaxed)
+            );
+            const auto found = storage->file.find<InterprocessDatasetMap>(kDatasetMapName);
+            if (found.first == nullptr) {
+                return false;
+            }
+
+            sources_[index].storage = std::move(storage);
+            sources_[index].dataset_map = found.first;
         } catch (...) {
             return false;
         }
@@ -367,12 +450,13 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
     }
 
     const std::string path{file_path};
+    const std::size_t initial_size = initial_mapped_file_size_.load(std::memory_order_relaxed);
 
     const auto file_lock = get_or_create_file_lock(path);
     std::unique_lock<std::shared_mutex> write_guard(*file_lock);
 
     try {
-        auto storage = std::make_shared<MappedFileStorage>(path);
+        auto storage = std::make_shared<MappedFileStorage>(path, initial_size);
 
         // Intentar encontrar o crear el map del dataset en el managed_mapped_file
         auto* dataset_map = storage->file.find_or_construct<InterprocessDatasetMap>(
@@ -399,7 +483,7 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
             // Intentar crear archivo nuevo
             try {
                 bip::file_mapping::remove(path.c_str());
-                auto storage = std::make_shared<MappedFileStorage>(path);
+                auto storage = std::make_shared<MappedFileStorage>(path, initial_size);
 
                 auto* dataset_map = storage->file.find_or_construct<InterprocessDatasetMap>(
                     kDatasetMapName
@@ -459,9 +543,10 @@ WriteStatus Store::set(std::string_view key_path, const Value& value) {
         key += segments[i];
     }
 
-    std::size_t grow_step = kInitialGrowStep;
+    std::size_t grow_step = initial_grow_step_.load(std::memory_order_relaxed);
+    const int max_grow_retries = max_grow_retries_.load(std::memory_order_relaxed);
 
-    for (int attempt = 0; attempt <= kMaxGrowRetries; ++attempt) {
+    for (int attempt = 0; attempt <= max_grow_retries; ++attempt) {
         try {
             auto* segment_mgr = source->storage->file.get_segment_manager();
             auto* map = as_dataset_map(source->dataset_map);
@@ -486,13 +571,14 @@ WriteStatus Store::set(std::string_view key_path, const Value& value) {
 
             return WriteStatus::ok;
         } catch (const bip::interprocess_exception&) {
-            if (attempt == kMaxGrowRetries) {
+            if (attempt == max_grow_retries) {
                 return WriteStatus::file_write_error;
             }
 
             const std::string source_file_path = source->file_path;
             const std::size_t current_file_size = source->storage->file.get_size();
-            const std::size_t dynamic_step = std::max(grow_step, std::max(kInitialGrowStep, current_file_size / 2));
+            const std::size_t base_step = initial_grow_step_.load(std::memory_order_relaxed);
+            const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
 
             if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
                 return WriteStatus::file_write_error;
@@ -600,6 +686,47 @@ WriteStatus Store::clear(std::string_view key_path) {
         if (!shrink_and_remap_sources_for_path(source->file_path)) {
             return WriteStatus::file_write_error;
         }
+    }
+
+    return WriteStatus::ok;
+}
+
+WriteStatus Store::compact(std::string_view dataset_id) {
+    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+
+    if (dataset_id.empty()) {
+        std::unordered_set<std::string> processed_paths;
+
+        for (const Source& source : sources_) {
+            if (!source.file_lock) {
+                return WriteStatus::file_write_error;
+            }
+
+            if (!processed_paths.insert(source.file_path).second) {
+                continue;
+            }
+
+            std::unique_lock<std::shared_mutex> write_guard(*source.file_lock);
+            if (!compact_and_remap_sources_for_path(source.file_path)) {
+                return WriteStatus::file_write_error;
+            }
+        }
+
+        return WriteStatus::ok;
+    }
+
+    Source* source = find_source(dataset_id);
+    if (source == nullptr) {
+        return WriteStatus::dataset_not_found;
+    }
+
+    if (!source->file_lock) {
+        return WriteStatus::file_write_error;
+    }
+
+    std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
+    if (!compact_and_remap_sources_for_path(source->file_path)) {
+        return WriteStatus::file_write_error;
     }
 
     return WriteStatus::ok;
