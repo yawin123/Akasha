@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -14,7 +15,7 @@ namespace akasha {
  * @brief Versión semántica de la librería.
  * @return Vista inmutable con la versión actual.
  */
-[[nodiscard]] inline std::string_view version() noexcept { return "0.2.0";}
+[[nodiscard]] inline std::string_view version() noexcept { return "0.3.0";}
 
 /**
  * @brief Ruta jerárquica en notación por puntos.
@@ -29,7 +30,7 @@ namespace akasha {
 using KeyPath = std::string;
 
 /** @brief Tipo de valor persistido en Akasha. */
-using Value = std::variant<bool, std::int64_t, double, std::string>;
+using Value = std::variant<bool, std::int64_t, std::uint64_t, double, std::string>;
 
 /**
  * @brief Vista de lectura de un valor.
@@ -37,7 +38,7 @@ using Value = std::variant<bool, std::int64_t, double, std::string>;
  * Es equivalente a Value, pero para cadenas usa std::string_view para
  * evitar copias durante consultas.
  */
-using ValueView = std::variant<bool, std::int64_t, double, std::string_view>;
+using ValueView = std::variant<bool, std::int64_t, std::uint64_t, double, std::string_view>;
 
 /**
  * @brief Fuente de carga en memoria.
@@ -53,6 +54,9 @@ enum class LoadStatus {
 	ok,
 	invalid_key_path,
 	key_conflict,
+	file_read_error,
+	parse_error,
+	unsupported_value_type,
 };
 
 /**
@@ -65,6 +69,12 @@ enum class LoadStatus {
 class Store {
 private:
 	struct Node;
+	struct MappedFileStorage;
+
+	struct MappedValueRef {
+		std::shared_ptr<MappedFileStorage> storage;
+		std::vector<std::string> segments;
+	};
 
 public:
 	/**
@@ -125,6 +135,20 @@ public:
 	[[nodiscard]] LoadStatus load(const DatasetSource& source);
 
 	/**
+	 * @brief Carga configuración desde un archivo FlexBuffers.
+	 *
+	 * Formato esperado:
+	 * - Raíz tipo mapa.
+	 * - Hojas de tipo bool, int, uint, double o string.
+	 * - Se admiten mapas anidados, que se convierten a KeyPath con dot notation.
+	 * - Los valores no se copian: se mantienen referencias al fichero mapeado.
+	 *
+	 * @param file_path Ruta del archivo FlexBuffers.
+	 * @return Estado de la operación de carga/parseo.
+	 */
+	[[nodiscard]] LoadStatus load_flexbuffer_file(std::string_view file_path);
+
+	/**
 	 * @brief Indica si existe una ruta completa.
 	 * @param key_path Ruta completa (incluye dataset).
 	 */
@@ -143,6 +167,7 @@ public:
 private:
 	struct Node {
 		std::optional<Value> value;
+		std::optional<MappedValueRef> mapped_value;
 		std::unordered_map<std::string, Node> children;
 	};
 

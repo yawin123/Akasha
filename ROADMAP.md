@@ -15,15 +15,21 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - Mantener API pública pequeña y clara.
 - Priorizar estabilidad y testabilidad sobre features “nice to have”.
 - Asegurar builds reproducibles con Conan + CMake.
+- Usar `Boost.Interprocess` como base de acceso a fichero vía memoria mapeada.
+- Definir políticas explícitas de crecimiento de archivos mapeados (sin realocaciones implícitas no controladas).
+- Evitar copias completas del dataset mapeado hacia estructuras espejo en memoria del proceso.
 - Evitar cambios de API incompatibles a partir de 0.9.0.
 
-## Estado actual (0.2.0 completado)
+## Estado actual (0.3.0 completado)
 
 - Librería estática compilando con CMake.
 - Dependencias integradas con Conan (Boost + FlatBuffers).
 - API core implementada con `Store`, `DatasetView`, `load`, `has`, `get` y notación por puntos.
 - Ejemplo funcional consultando valores y subárboles.
-- Próximo foco: 0.3.0 (carga real desde FlexBuffers).
+- Carga desde fichero FlexBuffers implementada con `Boost.Interprocess` (`file_mapping` + `mapped_region`) en modo lectura.
+- Resolución de consultas sobre referencias a memoria mapeada (sin materializar valores hoja en un contenedor separado).
+- Soporte completo de escalares: bool, int64, uint64, double, string (zero-copy para strings).
+- Próximo foco: 0.4.0 (fusión de múltiples fuentes) o 0.5.0 (persistencia con redimensionado dinámico).
 
 ## Hitos por versión
 
@@ -62,19 +68,36 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 ## 0.3.0 — Carga real desde FlexBuffers
 
-**Meta:** leer datos reales desde archivos FlexBuffers.
+**Meta:** leer y consultar datos reales desde archivos FlexBuffers mapeados, minimizando copia y latencia.
 
 **Entregables:**
 
-- Loader de fichero a estructura interna in-memory.
+- Loader de fichero basado en `Boost.Interprocess` con `file_mapping` + `mapped_region`.
+- Estructura de apoyo permitida solo para navegación (índices/rutas), sin duplicar los valores hoja fuera del mapeo.
 - Validaciones de formato y manejo de errores de parseo.
-- Soporte de tipos básicos: bool, int, double, string.
+- Soporte de tipos básicos: bool, int, uint, double, string.
 - Tests con fixtures FlexBuffers pequeñas.
 
 **Done cuando:**
 
 - Se pueden cargar N ficheros independientes y consultar valores por clave.
 - Los errores de parseo y claves no encontradas son distinguibles.
+- Las lecturas de valores se resuelven desde memoria mapeada (zero-copy para strings y sin volcado completo a `DatasetSource`).
+
+**Estado:** completado.
+
+**Completado:**
+
+- Lectura de FlexBuffers desde archivo mapeado (`mmap`) en modo `read_only`.
+- Parseo de mapa raíz y resolución por ruta con referencias al `mapped_region`.
+- Distinción de errores de lectura, parseo y tipo no soportado.
+- Escalares completos: bool, int64, uint64, double, string.
+- Consultas devuelven `std::nullopt` cuando la clave no existe.
+- Zero-copy: strings expuestos como `string_view` sobre memoria mapeada.
+
+**Notas de alcance:**
+
+- Por decisión de alcance, tests y fixtures se difieren a hitos posteriores de endurecimiento.
 
 ## 0.4.0 — Fusión de múltiples fuentes
 
@@ -99,12 +122,15 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 - API de actualización: `set(id, key, value)`.
 - Reglas de tipado y validación en escritura.
+- Persistencia sobre archivo mapeado con política de crecimiento.
+- Redimensionado dinámico del fichero mapeado cuando la capacidad sea insuficiente (grow + remap seguro).
 - Exportación a FlexBuffers (o formato intermedio documentado).
 - Tests de round-trip (load -> set -> save -> load).
 
 **Done cuando:**
 
 - Se demuestra round-trip sin pérdida en tipos soportados.
+- El crecimiento de fichero mapeado es transparente para el consumidor y mantiene consistencia.
 
 ## 0.6.0 — Base interproceso (MVP)
 
@@ -114,6 +140,7 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 - Abstracción de backend de almacenamiento (in-memory vs shared-memory).
 - Prototipo funcional con Boost.Interprocess para lectura compartida.
+- Coordinación de remapeo entre procesos (estrategia de sincronización y visibilidad tras resize).
 - Reglas de ownership y ciclo de vida documentadas.
 - Tests básicos de lectura desde proceso secundario.
 
@@ -192,8 +219,8 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 ## Orden recomendado de ejecución inmediata
 
-1. Implementar 0.3.0 (loader FlexBuffers + fixtures).
+1. Cerrar 0.3.0 (fixtures + validación fina de errores en carga FlexBuffers por mapeo).
 2. Implementar 0.4.0 (merge + precedencia).
-3. Reintroducir tests unitarios del core como parte del endurecimiento de calidad.
+3. Diseñar e implementar 0.5.0 con redimensionado dinámico seguro de archivos mapeados.
 
 Con esos tres hitos, Akasha ya tendría una propuesta de valor usable y medible.
