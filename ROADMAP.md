@@ -2,7 +2,7 @@
 
 ## Objetivo de 1.0.0
 
-Entregar una librería C++23 estable para cargar múltiples fuentes de configuración en FlexBuffers y exponer una API uniforme basada en:
+Entregar una librería C++23 estable para cargar múltiples fuentes de configuración en archivos mapeados persistentes y exponer una API uniforme basada en:
 
 - set de datos
 - clave (con dot notation)
@@ -20,20 +20,25 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - Evitar copias completas del dataset mapeado hacia estructuras espejo en memoria del proceso.
 - Evitar cambios de API incompatibles a partir de 0.9.0.
 
-## Estado actual (0.4.0 completado)
+## Estado actual (0.5.0)
 
 - Librería estática compilando con CMake.
 - Versión obtenida desde CMake (`AKASHA_VERSION` macro configurada en compilación).
-- Dependencias integradas con Conan (Boost + FlatBuffers).
+- Dependencias integradas con Conan (Boost).
 - API core implementada con `Store`, `DatasetView`, `load`, `has`, `get` y notación por puntos.
-- Solo carga FlexBuffers (sin `load()` para `DatasetSource` en memoria).
+- Backend de almacenamiento persistente con `Boost.Interprocess::managed_mapped_file`.
 - Cada dataset se identifica por `source_id`; duplicados rechazados con `source_already_loaded`.
 - Claves siempre calificadas por dataset (`dataset.algo...`).
 - `get`/`has` no hacen búsqueda cross-dataset: si el dataset no existe, devuelven `std::nullopt`/`false`.
 - Flag `create_if_missing` opcional: si true, crea archivo vacío (mapa raíz vacío) si no existe.
 - Soporte completo de escalares: bool, int64, uint64, double, string.
-- Ejemplo funcional demostrando claves calificadas, duplicados y creación de archivos.
-- Próximo foco: 0.5.0 (escritura con redimensionado dinámico) o 0.6.0 (interproceso).
+- Escritura directa con `set(key_path, value)` y `flush` inmediato.
+- Política de crecimiento dinámico del archivo mapeado (`grow + remap` seguro).
+- API de limpieza `clear(key_path={})` con borrado total/dataset/prefijo.
+- Reset determinista al tamaño inicial del archivo en limpiezas completas.
+- Concurrencia local por hilo con `std::shared_mutex` por fichero.
+- Ejemplo funcional validando round-trip y escenarios multihilo locales.
+- Foco activo: 0.6.0 (sincronización y garantías interproceso).
 
 ## Hitos por versión
 
@@ -102,8 +107,9 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 **Notas de alcance:**
 
 - Por decisión de alcance, tests y fixtures se difieren a hitos posteriores de endurecimiento.
+- Este hito queda como referencia histórica y fue sustituido por backend nativo de `managed_mapped_file` en 0.5.0.
 
-## 0.4.0 — Fusión de múltiples fuentes
+## 0.4.0 — Carga de múltiples datasets
 
 **Meta:** consolidar carga multi-dataset con claves calificadas y aislamiento por dataset.
 
@@ -113,7 +119,7 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 - Namespace explícito por dataset en todas las claves (`source_id.algo...`).
 - Rechazo de duplicados por `source_id` (`source_already_loaded`).
 - Consulta estricta por dataset en `get`/`has`.
-- Tests de conflicto y precedencia.
+- Tests de claves calificadas y rechazo de duplicados.
 
 **Done cuando:**
 
@@ -143,17 +149,32 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 **Entregables:**
 
-- API de actualización: `set(id, key, value)`.
+- API de actualización: `set(key_path, value)`.
+- Persistencia directa sobre archivo mapeado en cada `set`.
 - Reglas de tipado y validación en escritura.
 - Persistencia sobre archivo mapeado con política de crecimiento.
 - Redimensionado dinámico del fichero mapeado cuando la capacidad sea insuficiente (grow + remap seguro).
-- Exportación a FlexBuffers (o formato intermedio documentado).
-- Tests de round-trip (load -> set -> save -> load).
+- API de limpieza (`clear`) para borrado total o por prefijo.
+- Concurrencia local por hilos para `load/get/set/clear`.
+- Tests de round-trip (load -> set -> load).
 
 **Done cuando:**
 
 - Se demuestra round-trip sin pérdida en tipos soportados.
 - El crecimiento de fichero mapeado es transparente para el consumidor y mantiene consistencia.
+- Las operaciones concurrentes locales (mismo proceso) respetan exclusión y visibilidad.
+
+**Estado:** completado.
+
+**Completado:**
+
+- `set(key_path, value)` implementado con validación de rutas y conflictos.
+- Persistencia inmediata en `set` usando `Boost.Interprocess` (`read_write` + `flush`), sin `ofstream` en la librería.
+- Redimensionado dinámico (`grow + remap`) con reintentos de escritura.
+- `clear(key_path = {})` implementado para borrado total, de dataset y por prefijo.
+- Limpieza completa con recreación de fichero al tamaño base configurado.
+- Concurrencia local por hilos con bloqueos por fichero (`shared_mutex`).
+- Ejemplo actualizado con validaciones de round-trip y escenarios de acceso concurrente local.
 
 ## 0.6.0 — Base interproceso (MVP)
 
@@ -229,7 +250,7 @@ Con soporte de uso embebido (misma aplicación) y una base sólida para escenari
 
 **Criterios de salida 1.0.0:**
 
-- Sin issues críticos abiertos en core API, parseo y merge.
+- Sin issues críticos abiertos en core API, parseo y resolución por dataset.
 - Contratos de errores y comportamiento documentados.
 - Build e integración verificables desde cero con Conan + CMake.
 

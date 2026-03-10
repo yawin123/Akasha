@@ -1,232 +1,228 @@
-#include <fstream>
+#include <chrono>
+#include <cstdint>
+#include <atomic>
 #include <iostream>
-
-#include <flatbuffers/flexbuffers.h>
+#include <random>
+#include <string>
+#include <vector>
+#include <filesystem>
+#include <thread>
 
 #include "akasha.hpp"
 
-namespace {
+#define TEST_TIME std::chrono::seconds(1)
 
-void print_value(std::string_view key_path, const akasha::ValueView& value) {
-    std::visit(
-        [key_path](const auto& typed_value) {
-            std::cout << key_path << " = " << typed_value << '\n';
-        },
-        value
-    );
+size_t countKeysRecursive(const akasha::Store::DatasetView& view)
+{
+    size_t total = 0;
+
+    for (const auto& key : view.keys()) {
+        const auto entry = view.get(key);
+        if (!entry.has_value()) {
+            continue;
+        }
+
+        if (std::holds_alternative<akasha::ValueView>(*entry)) {
+            ++total;
+            continue;
+        }
+
+        total += countKeysRecursive(std::get<akasha::Store::DatasetView>(*entry));
+    }
+
+    return total;
 }
 
-}  // namespace
+size_t getResult(akasha::Store& store, std::string_view dataset = "test")
+{
+    const auto entry = store.get(dataset);
+    if (!entry.has_value()) {
+        std::cerr << "get failed: dataset view not found\n";
+        return -1;
+    }
+
+    const auto* dataset_view = std::get_if<akasha::Store::DatasetView>(&*entry);
+    if (dataset_view == nullptr) {
+        std::cerr << "get failed: expected dataset view\n";
+        return -1;
+    }
+
+    return countKeysRecursive(*dataset_view);
+}
+
+void clearStore(akasha::Store& store)
+{
+    const auto clear_status = store.clear();
+    if (clear_status != akasha::WriteStatus::ok) {
+        std::cerr << "clear failed with status: " << static_cast<int>(clear_status) << '\n';
+    }
+}
+
+size_t test1(akasha::Store& store)
+{
+    std::uint64_t initial_value = 123456;
+
+    std::uint64_t counter = 0;
+    const auto end_time = std::chrono::steady_clock::now() + TEST_TIME;
+
+    while (std::chrono::steady_clock::now() <= end_time ) {
+        ++counter;
+
+        const std::string actual_key = "test.1." + std::to_string(counter);
+        const std::string last_key = "test.1." + std::to_string(counter - 1);
+
+        std::uint64_t value_to_store = initial_value;
+        if (counter > 1) {
+            const auto last_entry = store.get(last_key);
+            if (!last_entry.has_value()) {
+                std::cerr << "get failed for last_key: " << last_key << '\n';
+                return 1;
+            }
+
+            const auto* last_value = std::get_if<akasha::ValueView>(&*last_entry);
+            if (last_value == nullptr) {
+                std::cerr << "get failed: last_key is not a scalar value\n";
+                return 1;
+            }
+
+            const auto* last_uint = std::get_if<std::uint64_t>(last_value);
+            if (last_uint == nullptr) {
+                std::cerr << "get failed: last_key is not uint64\n";
+                return 1;
+            }
+
+            value_to_store = *last_uint;
+        }
+
+        const akasha::WriteStatus set_status = store.set(actual_key, value_to_store);
+        if (set_status != akasha::WriteStatus::ok) {
+            std::cerr << "set failed with status: " << static_cast<int>(set_status) << '\n';
+            return 1;
+        }
+    }
+
+    return getResult(store, "test.1");
+}
+
+size_t test2(akasha::Store& store)
+{
+    clearStore(store);
+
+    std::atomic<bool> stop{false};
+    std::atomic<bool> failed{false};
+
+    const auto end_time = std::chrono::steady_clock::now() + TEST_TIME;
+
+    auto worker = [&](const std::string& prefix) {
+        std::uint64_t local_counter = 0;
+
+        while (!stop.load(std::memory_order_relaxed)) {
+            if (std::chrono::steady_clock::now() >= end_time) {
+                stop.store(true, std::memory_order_relaxed);
+                break;
+            }
+
+            ++local_counter;
+            const std::string key = prefix + "." + std::to_string(local_counter);
+
+            const akasha::WriteStatus set_status = store.set(key, local_counter);
+            if (set_status != akasha::WriteStatus::ok) {
+                std::cerr << "set failed in thread for prefix " << prefix
+                          << " with status: " << static_cast<int>(set_status) << '\n';
+                failed.store(true, std::memory_order_relaxed);
+                stop.store(true, std::memory_order_relaxed);
+                break;
+            }
+        }
+    };
+
+    std::thread hilo1(worker, "test.2.hilo1");
+    std::thread hilo2(worker, "test.2.hilo2");
+
+    hilo1.join();
+    hilo2.join();
+
+    if (failed.load(std::memory_order_relaxed)) {
+        return static_cast<size_t>(-1);
+    }
+
+    return getResult(store, "test.2");
+}
+
+size_t test3(akasha::Store& store)
+{
+    clearStore(store);
+
+    constexpr std::size_t key_count = 10;
+    std::vector<std::string> keys;
+    std::vector<std::uint64_t> expected_values;
+    keys.reserve(key_count);
+    expected_values.reserve(key_count);
+
+    std::random_device rd;
+    std::mt19937_64 rng(rd());
+    std::uniform_int_distribution<std::uint64_t> value_dist(1, 1'000'000'000ULL);
+
+    for (std::size_t index = 0; index < key_count; ++index) {
+        keys.push_back("test.3.rand." + std::to_string(index));
+        expected_values.push_back(value_dist(rng));
+
+        const akasha::WriteStatus set_status = store.set(keys.back(), expected_values.back());
+        if (set_status != akasha::WriteStatus::ok) {
+            std::cerr << "set failed in test3 init with status: " << static_cast<int>(set_status) << '\n';
+            return static_cast<size_t>(-1);
+        }
+    }
+
+    std::uniform_int_distribution<std::size_t> key_index_dist(0, key_count - 1);
+    std::size_t success_counter = 0;
+    const auto end_time = std::chrono::steady_clock::now() + TEST_TIME;
+
+    while (std::chrono::steady_clock::now() <= end_time) {
+        const std::size_t index = key_index_dist(rng);
+        const auto entry = store.get(keys[index]);
+        if (!entry.has_value()) {
+            continue;
+        }
+
+        const auto* value = std::get_if<akasha::ValueView>(&*entry);
+        if (value == nullptr) {
+            continue;
+        }
+
+        const auto* uint_value = std::get_if<std::uint64_t>(value);
+        if (uint_value == nullptr) {
+            continue;
+        }
+
+        if (*uint_value == expected_values[index]) {
+            ++success_counter;
+        }
+    }
+
+    return success_counter;
+}
 
 int main() {
     akasha::Store store;
 
-    // ========== Crear archivo de configuración "defaults" ==========
-    flexbuffers::Builder default_builder;
-    {
-        const std::size_t root = default_builder.StartMap();
-        const std::size_t core = default_builder.StartMap("core");
-        default_builder.Int("timeout", 30);
-        default_builder.UInt("max_request_id", static_cast<std::uint64_t>(1000ull));
-        const std::size_t settings = default_builder.StartMap("settings");
-        default_builder.Int("retries", 3);
-        default_builder.Bool("enabled", true);
-        default_builder.EndMap(settings);
-        default_builder.EndMap(core);
+    std::string file_path = "build/test_loop.mmap";
+    std::filesystem::remove(file_path);  // Limpiar archivo previo para pruebas consistentes
 
-        const std::size_t service = default_builder.StartMap("service");
-        default_builder.String("host", "localhost");
-        default_builder.Int("port", 8080);
-        default_builder.EndMap(service);
-        default_builder.EndMap(root);
-        default_builder.Finish();
+    const akasha::LoadStatus load_status = store.load("test", file_path, true);
+    if (load_status != akasha::LoadStatus::ok) {
+        std::cerr << "load failed with status: " << static_cast<int>(load_status) << '\n';
+        return 1;
     }
 
-    const std::string defaults_path = "build/defaults.flexbuf";
-    {
-        std::ofstream output{defaults_path, std::ios::binary | std::ios::trunc};
-        if (!output.is_open()) {
-            std::cerr << "failed to create FlexBuffers file: " << defaults_path << '\n';
-            return 1;
-        }
+    const size_t total_data_test1 = test1(store);
+    std::cout << "Total entries stored (test1): " << total_data_test1 << '\n';
 
-        const auto& serialized = default_builder.GetBuffer();
-        output.write(
-            reinterpret_cast<const char*>(serialized.data()),
-            static_cast<std::streamsize>(serialized.size())
-        );
-        if (!output.good()) {
-            std::cerr << "failed to write FlexBuffers data to: " << defaults_path << '\n';
-            return 1;
-        }
-    }
+    const size_t total_data_test2 = test2(store);
+    std::cout << "Total entries stored (test2): " << total_data_test2 << '\n';
 
-    // ========== Crear archivo de configuración "user" que sobrescribe algunos valores ==========
-    flexbuffers::Builder user_builder;
-    {
-        const std::size_t root = user_builder.StartMap();
-        const std::size_t core = user_builder.StartMap("core");
-        user_builder.Int("timeout", 60);  // sobrescribe defaults
-        user_builder.UInt("max_request_id", static_cast<std::uint64_t>(9223372036854775810ull));  // sobrescribe defaults
-        const std::size_t settings = user_builder.StartMap("settings");
-        user_builder.Int("retries", 78);  // sobrescribe defaults
-        // enabled no está en user, debería venir de defaults
-        user_builder.EndMap(settings);
-        user_builder.EndMap(core);
-
-        const std::size_t service = user_builder.StartMap("service");
-        user_builder.String("host", "production.example.com");  // sobrescribe defaults
-        // port no está en user, debería venir de defaults
-        user_builder.EndMap(service);
-        user_builder.EndMap(root);
-        user_builder.Finish();
-    }
-
-    const std::string user_path = "build/user.flexbuf";
-    {
-        std::ofstream output{user_path, std::ios::binary | std::ios::trunc};
-        if (!output.is_open()) {
-            std::cerr << "failed to create FlexBuffers file: " << user_path << '\n';
-            return 1;
-        }
-
-        const auto& serialized = user_builder.GetBuffer();
-        output.write(
-            reinterpret_cast<const char*>(serialized.data()),
-            static_cast<std::streamsize>(serialized.size())
-        );
-        if (!output.good()) {
-            std::cerr << "failed to write FlexBuffers data to: " << user_path << '\n';
-            return 1;
-        }
-    }
-
-    // ========== Cargar ambas fuentes: defaults primero, user después (último gana) ==========
-    {
-        const akasha::LoadStatus status = store.load("defaults", defaults_path);
-        if (status != akasha::LoadStatus::ok) {
-            std::cerr << "FlexBuffers load failed for defaults with status: " << static_cast<int>(status) << '\n';
-            return 1;
-        }
-    }
-
-    {
-        const akasha::LoadStatus status = store.load("user", user_path);
-        if (status != akasha::LoadStatus::ok) {
-            std::cerr << "FlexBuffers load failed for user with status: " << static_cast<int>(status) << '\n';
-            return 1;
-        }
-    }
-
-    // ========== Intentar cargar la misma fuente de nuevo (debe fallar) ==========
-    {
-        const akasha::LoadStatus status = store.load("user", user_path);
-        if (status == akasha::LoadStatus::source_already_loaded) {
-            std::cout << "\n[EXPECTED] Intento de recargar 'user': source_already_loaded\n";
-        } else {
-            std::cerr << "ERROR: Se esperaba source_already_loaded pero se obtuvo: " << static_cast<int>(status) << '\n';
-            return 1;
-        }
-    }
-
-    // ========== Intentar cargar archivo que no existe sin create_if_missing (debe fallar) ==========
-    {
-        const akasha::LoadStatus status = store.load("nonexistent", "build/does_not_exist.flexbuf", false);
-        if (status == akasha::LoadStatus::file_read_error) {
-            std::cout << "[EXPECTED] Intento de cargar archivo inexistente con create_if_missing=false: file_read_error\n";
-        } else {
-            std::cerr << "ERROR: Se esperaba file_read_error pero se obtuvo: " << static_cast<int>(status) << '\n';
-            return 1;
-        }
-    }
-
-    // ========== Cargar archivo que no existe con create_if_missing=true (debe crear vacío) ==========
-    {
-        const akasha::LoadStatus status = store.load("auto_created", "build/auto_created.flexbuf", true);
-        if (status == akasha::LoadStatus::ok) {
-            std::cout << "[EXPECTED] Archivo 'auto_created' no existía, se creó vacío: ok\n";
-            if (const auto entry = store.get("auto_created.anything"); !entry.has_value()) {
-                std::cout << "[EXPECTED] Archivo vacío no contiene claves: ok\n";
-            }
-        } else {
-            std::cerr << "ERROR: Se esperaba ok pero se obtuvo: " << static_cast<int>(status) << '\n';
-            return 1;
-        }
-    }
-
-    std::cout << "akasha version: " << akasha::version() << '\n';
-    std::cout << "loaded defaults from: " << defaults_path << '\n';
-    std::cout << "loaded user overrides from: " << user_path << '\n';
-    std::cout << '\n';
-
-    // ========== Consultas explícitas por dataset ==========
-    std::cout << "=== Dataset-qualified queries ===\n";
-
-    // timeout en dataset user
-    if (const auto entry = store.get("user.core.timeout"); entry.has_value()) {
-        if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-            print_value("user.core.timeout", *value);
-        }
-    }
-
-    // max_request_id en dataset user
-    if (const auto entry = store.get("user.core.max_request_id"); entry.has_value()) {
-        if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-            print_value("user.core.max_request_id", *value);
-        }
-    }
-
-    // retries en dataset user
-    if (const auto entry = store.get("user.core.settings.retries"); entry.has_value()) {
-        if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-            print_value("user.core.settings.retries", *value);
-        }
-    }
-
-    // enabled en dataset defaults
-    if (const auto entry = store.get("defaults.core.settings.enabled"); entry.has_value()) {
-        if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-            print_value("defaults.core.settings.enabled", *value);
-        }
-    }
-
-    // host en dataset user
-    if (const auto entry = store.get("user.service.host"); entry.has_value()) {
-        if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-            print_value("user.service.host", *value);
-        }
-    }
-
-    // port en dataset defaults
-    if (const auto entry = store.get("defaults.service.port"); entry.has_value()) {
-        if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-            print_value("defaults.service.port", *value);
-        }
-    }
-
-    if (!store.get("core.timeout").has_value()) {
-        std::cout << "[EXPECTED] core.timeout -> nullopt (dataset no calificado)\n";
-    }
-
-    std::cout << '\n';
-
-    // Navegar por DatasetView dentro de un dataset concreto
-    if (const auto settings_entry = store.get("user.core.settings"); settings_entry.has_value()) {
-        if (const auto* settings_view = std::get_if<akasha::Store::DatasetView>(&*settings_entry)) {
-            std::cout << "user.core.settings contains:\n";
-            for (const auto& key : settings_view->keys()) {
-                if (const auto entry = settings_view->get(key); entry.has_value()) {
-                    if (const auto* value = std::get_if<akasha::ValueView>(&*entry)) {
-                        std::cout << "  " << key << " -> ";
-                        std::visit([](const auto& v) { std::cout << v; }, *value);
-                        std::cout << '\n';
-                    } else if (const auto* subview = std::get_if<akasha::Store::DatasetView>(&*entry)) {
-                        std::cout << "  " << key << " -> [" << subview->keys().size() << " keys]\n";
-                    }
-                }
-            }
-        }
-    }
+    const size_t total_hits_test3 = test3(store);
+    std::cout << "Total entries readed (test3): " << total_hits_test3 << '\n';
 
     return 0;
 }

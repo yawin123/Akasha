@@ -7,4 +7,3 @@ class AkashaConan(ConanFile):
 
     def requirements(self):
         self.requires("boost/1.90.0")
-        self.requires("flatbuffers/25.9.23")

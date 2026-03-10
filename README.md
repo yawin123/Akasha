@@ -12,7 +12,7 @@ El objetivo principal es que los consumidores de la librería trabajen con una i
 
 Akasha actúa como una capa de abstracción sobre distintos ficheros de datos. Conceptualmente, puede pensarse como abrir varios documentos tipo JSON y consultar sus claves, pero en este proyecto se empleará:
 
-- **FlexBuffers** como formato de entrada.
+- **Boost.Interprocess managed_mapped_file** como backend de almacenamiento persistente.
 - **Boost.Interprocess** para soportar estrategias de compartición/interacción entre procesos.
 
 La librería permite cargar *N* ficheros de datos y resolver lecturas sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento.
@@ -36,11 +36,13 @@ Ejemplos:
 ### API actual de carga y consulta
 
 - `load(source_id, file_path, create_if_missing = false)`
-	- Carga un archivo FlexBuffers bajo el namespace `source_id`.
+	- Abre/crea un archivo mapeado y asocia `source_id` como dataset lógico.
 	- Si `source_id` ya está cargado, devuelve `source_already_loaded`.
 	- Si el archivo no existe:
 		- `create_if_missing = false` → `file_read_error`
 		- `create_if_missing = true` → crea dataset vacío.
+- `set(key_path, value)`
+	- Escribe directamente sobre el archivo mapeado y hace `flush` inmediato.
 - `get(key_path)` devuelve:
 	- `std::nullopt` si no existe,
 	- `ValueView` si apunta a hoja,
@@ -76,7 +78,6 @@ Estructura base actual:
 Akasha usa **Conan** para gestionar sus dependencias:
 
 - **Boost 1.90.0** (especialmente `Boost.Interprocess`)
-- **FlatBuffers 25.9.23** (FlexBuffers)
 
 Las dependencias se especifican en `conanfile.py` y se instalan automáticamente via Conan.
 

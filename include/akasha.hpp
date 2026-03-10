@@ -3,9 +3,12 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -66,6 +69,15 @@ enum class LoadStatus {
 	source_already_loaded,
 };
 
+/** @brief Resultado de operaciones de escritura/persistencia. */
+enum class WriteStatus {
+	ok,
+	invalid_key_path,
+	key_conflict,
+	dataset_not_found,
+	file_write_error,
+};
+
 /**
  * @brief Almacén jerárquico de configuración.
  *
@@ -75,13 +87,8 @@ enum class LoadStatus {
  */
 class Store {
 private:
-	struct Node;
 	struct MappedFileStorage;
-
-	struct MappedValueRef {
-		std::shared_ptr<MappedFileStorage> storage;
-		std::vector<std::string> segments;
-	};
+	struct Source;
 
 public:
 	/**
@@ -117,8 +124,12 @@ public:
 
 	private:
 		friend class Store;
-		explicit DatasetView(const Node* node) noexcept;
-		const Node* node_{nullptr};
+	
+		DatasetView(const Source* source, std::string prefix = {}) noexcept 
+			: source_{source}, prefix_{std::move(prefix)} {}
+	
+		const Source* source_{nullptr};
+		std::string prefix_;
 	};
 
 	/**
@@ -131,25 +142,41 @@ public:
 	using QueryResult = std::variant<ValueView, DatasetView>;
 
 	/**
-	 * @brief Carga configuración desde un archivo FlexBuffers.
+	 * @brief Carga configuración desde un archivo de memoria mapeada.
 	 *
-	 * Formato esperado:
-	 * - Raíz tipo mapa.
-	 * - Hojas de tipo bool, int, uint, double o string.
-	 * - Se admiten mapas anidados, que se convierten a KeyPath con dot notation.
-	 * - Los valores no se copian: se mantienen referencias al fichero mapeado.
+	 * Usa Boost.Interprocess managed_mapped_file para almacenar directamente
+	 * un map<string, value> en el archivo. Esto permite lecturas zero-copy
+	 * y escrituras directas sin reserialización.
+	 *
 	 * - Si la fuente ya existe (mismo source_id), devuelve error `source_already_loaded`.
 	 *
-	 * @param source_id Identificador único de la fuente (idéntico al nombre del archivo).
-	 * @param file_path Ruta del archivo FlexBuffers.
-	 * @param create_if_missing Si es true y el archivo no existe, crea uno vacío (mapa raíz vacío).
-	 * @return Estado de la operación de carga/parseo.
+	 * @param source_id Identificador único de la fuente (nombre del dataset).
+	 * @param file_path Ruta del archivo de memoria mapeada.
+	 * @param create_if_missing Si es true y el archivo no existe, crea uno vacío.
+	 * @return Estado de la operación de carga.
 	 */
 	[[nodiscard]] LoadStatus load(
 		std::string_view source_id,
 		std::string_view file_path,
 		bool create_if_missing = false
 	);
+
+	/**
+	 * @brief Establece o reemplaza un valor hoja en una clave calificada por dataset.
+	 *
+	 * Ejemplo: set("user.core.timeout", 90)
+	 * La escritura se realiza directamente en el managed_mapped_file (sin reserialización).
+	 */
+	[[nodiscard]] WriteStatus set(std::string_view key_path, const Value& value);
+
+	/**
+	 * @brief Elimina datos persistidos.
+	 *
+	 * - Si key_path está vacío, elimina todos los datos de todos los datasets cargados.
+	 * - Si key_path incluye solo dataset (p.ej. "user"), elimina todo ese dataset.
+	 * - Si key_path incluye subclave (p.ej. "user.core"), elimina esa clave y todo su subárbol.
+	 */
+	[[nodiscard]] WriteStatus clear(std::string_view key_path = {});
 
 	/**
 	 * @brief Indica si existe una ruta completa.
@@ -168,22 +195,25 @@ public:
 	[[nodiscard]] std::optional<QueryResult> get(std::string_view key_path) const;
 
 private:
-	struct Node {
-		std::optional<Value> value;
-		std::optional<MappedValueRef> mapped_value;
-		std::unordered_map<std::string, Node> children;
-	};
-
 	struct Source {
 		std::string id;
-		Node root;
+		std::string file_path;
+		std::shared_ptr<MappedFileStorage> storage;
+		std::shared_ptr<std::shared_mutex> file_lock;
+		void* dataset_map{nullptr};
 	};
 
 	[[nodiscard]] static bool split_key_path(std::string_view key_path, std::vector<std::string_view>& segments);
-	[[nodiscard]] static std::optional<QueryResult> get_from_node(const Node& base, std::string_view key_path);
-	[[nodiscard]] std::pair<Node*, LoadStatus> get_or_create_source(std::string_view source_id);
+	[[nodiscard]] Source* find_source(std::string_view source_id);
+	[[nodiscard]] const Source* find_source(std::string_view source_id) const;
+	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
+	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
+	[[nodiscard]] bool shrink_and_remap_sources_for_path(const std::string& file_path);
 
 	std::vector<Source> sources_;
+	mutable std::shared_mutex sources_mutex_;
+	mutable std::mutex file_locks_mutex_;
+	mutable std::unordered_map<std::string, std::shared_ptr<std::shared_mutex>> file_locks_;
 };
 
 }  // namespace akasha
