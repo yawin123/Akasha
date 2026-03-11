@@ -20,29 +20,18 @@ namespace {
 
 namespace bip = boost::interprocess;
 
-// INTERNAL: Tipo Value solo para uso interno (no expuesto al usuario)
 using InternalValue = std::variant<bool, std::int64_t, std::uint64_t, double, std::string>;
-
-// Segment manager para el archivo mapeado
 using SegmentManager = bip::managed_mapped_file::segment_manager;
-
-// Allocator para caracteres sobre la región mapeada
 using CharAllocator = bip::allocator<char, SegmentManager>;
-
-// String que vive en el archivo mapeado
 using InterprocessString = bip::basic_string<char, std::char_traits<char>, CharAllocator>;
-
-// Valor = simplemente InterprocessString (bytes crudos)
 using InterprocessValue = InterprocessString;
 
-// Comparador para InterprocessString
 struct InterprocessStringLess {
     bool operator()(const InterprocessString& a, const InterprocessString& b) const {
         return std::string_view(a.c_str(), a.size()) < std::string_view(b.c_str(), b.size());
     }
 };
 
-// Map que vive en el archivo mapeado (flat key-value por dataset)
 using MapAllocator = bip::allocator<std::pair<const InterprocessString, InterprocessValue>, SegmentManager>;
 using InterprocessDatasetMap = bip::map<InterprocessString, InterprocessValue, InterprocessStringLess, MapAllocator>;
 
@@ -63,7 +52,6 @@ struct Store::MappedFileStorage {
     bip::managed_mapped_file file;
 };
 
-// Helper para convertir void* a InterprocessDatasetMap*
 inline InterprocessDatasetMap* as_dataset_map(void* ptr) {
     return static_cast<InterprocessDatasetMap*>(ptr);
 }
@@ -311,20 +299,20 @@ bool Store::compact_and_remap_sources_for_path(const std::string& file_path) {
     return true;
 }
 
-LoadStatus Store::load(std::string_view source_id, std::string_view file_path, bool create_if_missing) {
+Status Store::load(std::string_view source_id, std::string_view file_path, bool create_if_missing) {
     if (source_id.empty()) {
-        return LoadStatus::invalid_key_path;
+        return last_status_ = Status::invalid_key_path;
     }
 
     if (file_path.empty()) {
-        return LoadStatus::file_read_error;
+        return last_status_ = Status::file_read_error;
     }
 
     std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
 
     // Validar que no existe
     if (find_source(source_id) != nullptr) {
-        return LoadStatus::source_already_loaded;
+        return last_status_ = Status::source_already_loaded;
     }
 
     const std::string path{file_path};
@@ -342,7 +330,7 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
         )(storage->file.get_segment_manager());
 
         if (!dataset_map) {
-            return LoadStatus::file_read_error;
+            return last_status_ = Status::file_read_error;
         }
 
         // Crear la Source y almacenarla
@@ -355,7 +343,7 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
         new_source.store = this;
 
         sources_.push_back(std::move(new_source));
-        return LoadStatus::ok;
+        return last_status_ = Status::ok;
 
     } catch (const bip::interprocess_exception& e) {
         if (create_if_missing) {
@@ -369,7 +357,7 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
                 )(storage->file.get_segment_manager());
 
                 if (!dataset_map) {
-                    return LoadStatus::file_read_error;
+                    return last_status_ = Status::file_read_error;
                 }
 
                 Source new_source;
@@ -381,19 +369,19 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
                 new_source.store = this;
 
                 sources_.push_back(std::move(new_source));
-                return LoadStatus::ok;
+                return last_status_ = Status::ok;
             } catch (...) {
-                return LoadStatus::file_read_error;
+                return last_status_ = Status::file_read_error;
             }
         }
-        return LoadStatus::file_read_error;
+        return last_status_ = Status::file_read_error;
     }
 }
 
-WriteStatus Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size) {
+Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size) {
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.size() < 2) {
-        return WriteStatus::invalid_key_path;
+        return last_status_ = Status::invalid_key_path;
     }
 
     std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
@@ -401,17 +389,17 @@ WriteStatus Store::set_bytes_impl(std::string_view key_path, const void* bytes, 
     const std::string_view dataset_id = segments.front();
     Source* source = find_source(dataset_id);
     if (source == nullptr) {
-        return WriteStatus::dataset_not_found;
+        return last_status_ = Status::dataset_not_found;
     }
 
     if (!source->file_lock) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
 
     if (!source->dataset_map || !source->storage) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     // Construir la clave sin el prefijo del dataset
@@ -447,13 +435,13 @@ WriteStatus Store::set_bytes_impl(std::string_view key_path, const void* bytes, 
             }
 
             if (!source->storage->file.flush()) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
-            return WriteStatus::ok;
+            return last_status_ = Status::ok;
         } catch (const bip::interprocess_exception&) {
             if (attempt == max_grow_retries) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             const std::string source_file_path = source->file_path;
@@ -462,19 +450,19 @@ WriteStatus Store::set_bytes_impl(std::string_view key_path, const void* bytes, 
             const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
 
             if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             source = find_source(dataset_id);
             if (source == nullptr || !source->storage || !source->dataset_map) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             grow_step = dynamic_step * 2;
         }
     }
 
-    return WriteStatus::file_write_error;
+    return last_status_ = Status::file_write_error;
 }
 
 std::optional<std::vector<char>> Store::get_bytes_impl(std::string_view key_path, std::size_t expected_size) const {
@@ -530,10 +518,10 @@ std::optional<std::vector<char>> Store::get_bytes_impl(std::string_view key_path
 }
 
 /*
-WriteStatus Store::set_internal(std::string_view key_path, const InternalValue& value) {
+Status Store::set_internal(std::string_view key_path, const InternalValue& value) {
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.size() < 2) {
-        return WriteStatus::invalid_key_path;
+        return last_status_ = Status::invalid_key_path;
     }
 
     std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
@@ -541,17 +529,17 @@ WriteStatus Store::set_internal(std::string_view key_path, const InternalValue& 
     const std::string_view dataset_id = segments.front();
     Source* source = find_source(dataset_id);
     if (source == nullptr) {
-        return WriteStatus::dataset_not_found;
+        return last_status_ = Status::dataset_not_found;
     }
 
     if (!source->file_lock) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
 
     if (!source->dataset_map || !source->storage) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     // Construir la clave sin el prefijo del dataset
@@ -586,13 +574,13 @@ WriteStatus Store::set_internal(std::string_view key_path, const InternalValue& 
             }
 
             if (!source->storage->file.flush()) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
-            return WriteStatus::ok;
+            return last_status_ = Status::ok;
         } catch (const bip::interprocess_exception&) {
             if (attempt == max_grow_retries) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             const std::string source_file_path = source->file_path;
@@ -601,23 +589,23 @@ WriteStatus Store::set_internal(std::string_view key_path, const InternalValue& 
             const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
 
             if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             source = find_source(dataset_id);
             if (source == nullptr || !source->storage || !source->dataset_map) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             grow_step = dynamic_step * 2;
         }
     }
 
-    return WriteStatus::file_write_error;
+    return last_status_ = Status::file_write_error;
 }
 */
 
-WriteStatus Store::clear(std::string_view key_path) {
+Status Store::clear(std::string_view key_path) {
     std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
 
     if (key_path.empty()) {
@@ -625,7 +613,7 @@ WriteStatus Store::clear(std::string_view key_path) {
 
         for (const Source& source : sources_) {
             if (!source.storage || !source.dataset_map || !source.file_lock) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             if (!processed_paths.insert(source.file_path).second) {
@@ -637,30 +625,30 @@ WriteStatus Store::clear(std::string_view key_path) {
             map->clear();
 
             if (!source.storage->file.flush()) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             if (!shrink_and_remap_sources_for_path(source.file_path)) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
         }
 
-        return WriteStatus::ok;
+        return last_status_ = Status::ok;
     }
 
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.empty()) {
-        return WriteStatus::invalid_key_path;
+        return last_status_ = Status::invalid_key_path;
     }
 
     const std::string_view dataset_id = segments.front();
     Source* source = find_source(dataset_id);
     if (source == nullptr) {
-        return WriteStatus::dataset_not_found;
+        return last_status_ = Status::dataset_not_found;
     }
 
     if (!source->storage || !source->dataset_map || !source->file_lock) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
@@ -669,14 +657,14 @@ WriteStatus Store::clear(std::string_view key_path) {
     if (segments.size() == 1) {
         map->clear();
         if (!source->storage->file.flush()) {
-            return WriteStatus::file_write_error;
+            return last_status_ = Status::file_write_error;
         }
 
         if (!shrink_and_remap_sources_for_path(source->file_path)) {
-            return WriteStatus::file_write_error;
+            return last_status_ = Status::file_write_error;
         }
 
-        return WriteStatus::ok;
+        return last_status_ = Status::ok;
     }
 
     std::string prefix;
@@ -699,19 +687,19 @@ WriteStatus Store::clear(std::string_view key_path) {
     }
 
     if (!source->storage->file.flush()) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     if (map->empty()) {
         if (!shrink_and_remap_sources_for_path(source->file_path)) {
-            return WriteStatus::file_write_error;
+            return last_status_ = Status::file_write_error;
         }
     }
 
-    return WriteStatus::ok;
+    return last_status_ = Status::ok;
 }
 
-WriteStatus Store::compact(std::string_view dataset_id) {
+Status Store::compact(std::string_view dataset_id) {
     std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
 
     if (dataset_id.empty()) {
@@ -719,7 +707,7 @@ WriteStatus Store::compact(std::string_view dataset_id) {
 
         for (const Source& source : sources_) {
             if (!source.file_lock) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
 
             if (!processed_paths.insert(source.file_path).second) {
@@ -728,28 +716,28 @@ WriteStatus Store::compact(std::string_view dataset_id) {
 
             std::unique_lock<std::shared_mutex> write_guard(*source.file_lock);
             if (!compact_and_remap_sources_for_path(source.file_path)) {
-                return WriteStatus::file_write_error;
+                return last_status_ = Status::file_write_error;
             }
         }
 
-        return WriteStatus::ok;
+        return last_status_ = Status::ok;
     }
 
     Source* source = find_source(dataset_id);
     if (source == nullptr) {
-        return WriteStatus::dataset_not_found;
+        return last_status_ = Status::dataset_not_found;
     }
 
     if (!source->file_lock) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
     std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
     if (!compact_and_remap_sources_for_path(source->file_path)) {
-        return WriteStatus::file_write_error;
+        return last_status_ = Status::file_write_error;
     }
 
-    return WriteStatus::ok;
+    return last_status_ = Status::ok;
 }
 
 bool Store::has(std::string_view key_path) const {
@@ -906,6 +894,10 @@ std::vector<std::string> Store::DatasetView::keys() const {
     }
 
     return result;
+}
+
+Status Store::last_status() const noexcept {
+    return last_status_;
 }
 
 }  // namespace akasha

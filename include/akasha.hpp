@@ -40,23 +40,18 @@ namespace akasha {
  */
 using KeyPath = std::string;
 
-/** @brief Resultado de una operación de carga. */
-enum class LoadStatus {
+/** @brief Resultado de cualquier operación (carga, escritura, etc). */
+enum class Status {
 	ok,
-	invalid_key_path,
-	key_conflict,
-	file_read_error,
-	parse_error,
-	source_already_loaded,
-};
-
-/** @brief Resultado de operaciones de escritura/persistencia. */
-enum class WriteStatus {
-	ok,
-	invalid_key_path,
-	key_conflict,
-	dataset_not_found,
-	file_write_error,
+	invalid_key_path,      // Clave no tiene al menos 2 segmentos (dataset.clave)
+	key_conflict,          // Conflicto en estructura jerárquica
+	file_read_error,       // Error al leer archivo mapeado
+	file_write_error,      // Error al escribir en archivo
+	file_not_found,        // Archivo no existe y create_if_missing=false
+	file_full,             // Archivo lleno después de reintentos de crecimiento
+	parse_error,           // Error al parsear datos internos
+	dataset_not_found,     // Dataset (primer segmento) no existe
+	source_already_loaded, // Dataset ya está cargado
 };
 
 struct PerformanceTuning {
@@ -154,7 +149,7 @@ public:
 	 * @param create_if_missing Si es true y el archivo no existe, crea uno vacío.
 	 * @return Estado de la operación de carga.
 	 */
-	[[nodiscard]] LoadStatus load(
+	[[nodiscard]] Status load(
 		std::string_view source_id,
 		std::string_view file_path,
 		bool create_if_missing = false
@@ -168,7 +163,7 @@ public:
 	 * El usuario es 100% responsable de que el tipo T sea consistente al leer.
 	 */
 	template<typename T>
-	[[nodiscard]] WriteStatus set(std::string_view key_path, const T& value) {
+	[[nodiscard]] Status set(std::string_view key_path, const T& value) {
 		static_assert(std::is_trivially_copyable_v<T>, 
 			"Type T must be trivially copyable for akasha::Store::set<T>");
 		
@@ -193,7 +188,7 @@ public:
 	 * - Si key_path incluye solo dataset (p.ej. "user"), elimina todo ese dataset.
 	 * - Si key_path incluye subclave (p.ej. "user.core"), elimina esa clave y todo su subárbol.
 	 */
-	[[nodiscard]] WriteStatus clear(std::string_view key_path = {});
+	[[nodiscard]] Status clear(std::string_view key_path = {});
 
 	/**
 	 * @brief Compacta el archivo mapeado para un dataset o para todos.
@@ -201,13 +196,19 @@ public:
 	 * - Si dataset_id está vacío, compacta todos los archivos de datasets cargados.
 	 * - Si dataset_id existe, compacta solo su archivo asociado.
 	 */
-	[[nodiscard]] WriteStatus compact(std::string_view dataset_id = {});
+	[[nodiscard]] Status compact(std::string_view dataset_id = {});
 
 	/**
 	 * @brief Indica si existe una ruta completa.
 	 * @param key_path Ruta completa (incluye dataset).
 	 */
 	[[nodiscard]] bool has(std::string_view key_path) const;
+
+	/**
+	 * @brief Obtiene el último status retornado por cualquier operación.
+	 * @return Status del último error, o Status::ok si última operación fue exitosa.
+	 */
+	[[nodiscard]] Status last_status() const noexcept;
 
 	/**
 	 * @brief Consulta una ruta completa tipada o retorna DatasetView.
@@ -260,7 +261,7 @@ public:
 		
 		// Si no existe, escribir el default
 		const auto set_status = set<T>(key_path, default_value);
-		if (set_status == WriteStatus::ok) {
+		if (set_status == Status::ok) {
 			return default_value;
 		}
 		
@@ -282,7 +283,7 @@ private:
 	[[nodiscard]] Source* find_source(std::string_view source_id);
 	[[nodiscard]] const Source* find_source(std::string_view source_id) const;
 	[[nodiscard]] std::optional<DatasetView> get_dataset_view(std::string_view key_path) const;
-	[[nodiscard]] WriteStatus set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size);
+	[[nodiscard]] Status set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size);
 	[[nodiscard]] std::optional<std::vector<char>> get_bytes_impl(std::string_view key_path, std::size_t expected_size) const;
 	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
 	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
@@ -296,6 +297,7 @@ private:
 	std::atomic<std::size_t> initial_mapped_file_size_{64 * 1024};
 	std::atomic<std::size_t> initial_grow_step_{(64 * 1024) / 2};
 	std::atomic<int> max_grow_retries_{8};
+	mutable Status last_status_{Status::ok};
 };
 
 // Template specializations for std::string outside the class scope
@@ -305,16 +307,13 @@ private:
  * Serializa la string como [size_t length][char data].
  */
 template<>
-inline akasha::WriteStatus Store::set<std::string>(std::string_view key_path, const std::string& value) {
-	// Serializar: [size_t length][char data]
+inline akasha::Status Store::set<std::string>(std::string_view key_path, const std::string& value) {
 	std::vector<char> buffer;
-	buffer.resize(sizeof(std::size_t) + value.size());
-	
 	std::size_t len = value.size();
-	std::memcpy(buffer.data(), &len, sizeof(std::size_t));
-	if (len > 0) {
-		std::memcpy(buffer.data() + sizeof(std::size_t), value.data(), len);
-	}
+	
+	const char* len_bytes = reinterpret_cast<const char*>(&len);
+	buffer.insert(buffer.end(), len_bytes, len_bytes + sizeof(std::size_t));
+	buffer.insert(buffer.end(), value.begin(), value.end());
 	
 	return set_bytes_impl(key_path, buffer.data(), buffer.size());
 }
@@ -361,7 +360,7 @@ inline std::optional<std::string> Store::getorset<std::string>(std::string_view 
 	
 	// Si no existe, escribir el default
 	const auto set_status = set<std::string>(key_path, default_value);
-	if (set_status == WriteStatus::ok) {
+	if (set_status == Status::ok) {
 		return default_value;
 	}
 	

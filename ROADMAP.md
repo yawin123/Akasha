@@ -210,18 +210,29 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 - Compilación limpia, ejecución funcional sin overhead de estadísticas/métricas.
 - **Política:** Sin trackers/stats internos; librería almacena solo datos de usuario.
 
+## 0.7.0 — Modelo de errores y observabilidad
+
 **Meta:** mejorar diagnósticos y soporte de operación.
 
 **Entregables:**
 
 - Jerarquía clara de errores/códigos (`parse_error`, `not_found`, etc.).
 - Mensajes de error consistentes para consumidor.
-- Hooks de logging trazables (sin acoplar a framework concreto).
-- Tests de errores y contratos.
 
 **Done cuando:**
 
 - Los fallos más frecuentes están cubiertos con mensajes accionables.
+
+**Estado:** completado.
+
+**Completado:**
+
+- `Status` enum consolidado: 10 códigos (ok, invalid_key_path, key_conflict, file_read_error, file_write_error, file_not_found, file_full, parse_error, dataset_not_found, source_already_loaded).
+- Todos los métodos públicos (`load`, `set<T>`, `get<T>`, `clear`, `compact`, `has`) retornan `Status` (reemplazó LoadStatus/WriteStatus).
+- Método `last_status() const noexcept → Status` para consultar el último status de operación.
+- Miembro privado `mutable Status last_status_` para registro de errores con update thread-safe.
+- Ejemplo actualizado validando retornos de Status y función `last_status()`.
+- Compilación limpia, ejecución funcional con tracking automático de errores sin overhead.
 
 ## 0.8.0 — Empaquetado y DX de integración
 

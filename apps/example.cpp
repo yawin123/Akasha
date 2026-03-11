@@ -73,7 +73,7 @@ size_t test1(akasha::Store& store)
         }
 
         const auto set_status = store.set<std::uint64_t>(actual_key, value_to_store);
-        if (set_status != akasha::WriteStatus::ok) {
+        if (set_status != akasha::Status::ok) {
             std::cerr << "set failed with status: " << static_cast<int>(set_status) << '\n';
             return 0;
         }
@@ -109,7 +109,7 @@ std::uint64_t test1_iterations(akasha::Store& store, std::uint64_t iterations)
         }
 
         const auto set_status = store.set<std::uint64_t>(actual_key, value_to_store);
-        if (set_status != akasha::WriteStatus::ok) {
+        if (set_status != akasha::Status::ok) {
             std::cerr << "set failed with status: " << static_cast<int>(set_status) << '\n';
             return 0;
         }
@@ -129,7 +129,7 @@ void fill_random(akasha::Store& store, const std::string& key_prefix, std::uint6
         const std::string key = key_prefix + std::to_string(i);
         const std::uint64_t random_value = dist(rng);
         const auto set_status = store.set<std::uint64_t>(key, random_value);
-        if (set_status != akasha::WriteStatus::ok) {
+        if (set_status != akasha::Status::ok) {
             std::cerr << "set failed with status: " << static_cast<int>(set_status) << '\n';
             return;
         }
@@ -197,7 +197,7 @@ std::uint64_t writes_test(akasha::Store& store, const std::string& key_prefix, s
     for(std::uint64_t i = 1; i <= iterations; ++i) {
         const std::string key = key_prefix + std::to_string(i);
         const auto set_status = store.set<std::uint64_t>(key, i);
-        if(set_status == akasha::WriteStatus::ok) {
+        if(set_status == akasha::Status::ok) {
             ++success_count;
         }
     }
@@ -216,46 +216,46 @@ void store_all_types(akasha::Store& store)
     
     // uint64_t
     const auto status_u64 = store.set<std::uint64_t>("test.types.uint64", 0xDEADBEEFCAFEBABEULL);
-    std::cout << "uint64_t: " << (status_u64 == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "uint64_t: " << (status_u64 == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // uint32_t
     const auto status_u32 = store.set<std::uint32_t>("test.types.uint32", 0xDEADBEEFU);
-    std::cout << "uint32_t: " << (status_u32 == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "uint32_t: " << (status_u32 == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // int32_t
     const auto status_i32 = store.set<std::int32_t>("test.types.int32", -42);
-    std::cout << "int32_t: " << (status_i32 == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "int32_t: " << (status_i32 == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // double
     const auto status_double = store.set<double>("test.types.double", 3.141592653589793);
-    std::cout << "double: " << (status_double == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "double: " << (status_double == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // float
     const auto status_float = store.set<float>("test.types.float", 2.71828f);
-    std::cout << "float: " << (status_float == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "float: " << (status_float == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // bool
     const auto status_bool_true = store.set<bool>("test.types.bool_true", true);
-    std::cout << "bool (true): " << (status_bool_true == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "bool (true): " << (status_bool_true == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     const auto status_bool_false = store.set<bool>("test.types.bool_false", false);
-    std::cout << "bool (false): " << (status_bool_false == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "bool (false): " << (status_bool_false == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // char
     const auto status_char = store.set<char>("test.types.char", 'A');
-    std::cout << "char: " << (status_char == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "char: " << (status_char == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // struct personalizado
     const auto status_struct = store.set<Point3D>("test.types.point3d", {1.5f, 2.5f, 3.5f});
-    std::cout << "Point3D struct: " << (status_struct == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "Point3D struct: " << (status_struct == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // std::string
     const auto status_string = store.set<std::string>("test.types.string", "Hola, Akasha!");
-    std::cout << "std::string: " << (status_string == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';
+    std::cout << "std::string: " << (status_string == akasha::Status::ok ? "OK" : "FAIL") << '\n';
     
     // Empty string
     const auto status_empty_string = store.set<std::string>("test.types.empty_string", "");
-    std::cout << "std::string (empty): " << (status_empty_string == akasha::WriteStatus::ok ? "OK" : "FAIL") << '\n';    
+    std::cout << "std::string (empty): " << (status_empty_string == akasha::Status::ok ? "OK" : "FAIL") << '\n';    
     std::cout << "\n=== Recuperando datos almacenados ===\n";
     
     if (const auto val = store.get<std::uint64_t>("test.types.uint64")) {
@@ -344,7 +344,7 @@ int main(int argc, char* argv[]) {
     std::string file_path = "build/test_loop.mmap";
 
     const auto load_status = store.load("test", file_path, true);
-    if (load_status != akasha::LoadStatus::ok) {
+    if (load_status != akasha::Status::ok) {
         std::cerr << "load failed with status: " << static_cast<int>(load_status) << '\n';
         return 1;
     }
@@ -356,12 +356,12 @@ int main(int argc, char* argv[]) {
     fill_random(store, "test.", iterations);
     std::cout << "Read test (" << iterations << " iterations, consecutive access): " << duration_wrapper(reads_test, store, "test.", iterations) << " µs\n";
     std::cout << "Read test (" << iterations << " iterations, random access): " << duration_wrapper(reads_test_random, store, "test.", iterations) << " µs\n";
-    if(store.clear() != akasha::WriteStatus::ok)  std::cerr << "Failed to clear the store.\n";
+    if(store.clear() != akasha::Status::ok)  std::cerr << "Failed to clear the store.\n";
 
     std::cout << "Write test (" << iterations << " iterations, cleared store): " << duration_wrapper(writes_test, store, "test.", iterations) << " µs\n";
     std::cout << "Write test (" << iterations << " iterations, filled store): " << duration_wrapper(writes_test, store, "test.", iterations) << " µs\n";
 
-    if(store.clear() != akasha::WriteStatus::ok) {
+    if(store.clear() != akasha::Status::ok) {
         std::cerr << "Failed to clear the store.\n";
     }
 
