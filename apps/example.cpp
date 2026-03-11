@@ -293,6 +293,34 @@ void store_all_types(akasha::Store& store)
     }    std::cout << '\n';
 }
 
+// Demostración de getorset: obtener o establecer con valor por defecto
+void demo_getorset(akasha::Store& store)
+{
+    std::cout << "=== Demo getorset (obtener o establecer default) ===\n";
+    
+    // Primera llamada: no existe, se establece el default
+    const auto val1 = store.getorset<std::uint64_t>("test.getorset.counter", 100ULL);
+    std::cout << "Intento 1 - counter (no existe): " << (val1.has_value() ? std::to_string(*val1) : "FAIL") << '\n';
+    
+    // Segunda llamada: ya existe, retorna el valor anterior
+    const auto val2 = store.getorset<std::uint64_t>("test.getorset.counter", 200ULL);
+    std::cout << "Intento 2 - counter (existe): " << (val2.has_value() ? std::to_string(*val2) : "FAIL") << '\n';
+    
+    // String: primera vez establece "config-default"
+    const auto str1 = store.getorset<std::string>("test.getorset.config", "config-default");
+    std::cout << "String intento 1 (no existe): " << (str1.has_value() ? "\"" + *str1 + "\"" : "FAIL") << '\n';
+    
+    // String: segunda vez retorna el valor anterior
+    const auto str2 = store.getorset<std::string>("test.getorset.config", "otro-default");
+    std::cout << "String intento 2 (existe): " << (str2.has_value() ? "\"" + *str2 + "\"" : "FAIL") << '\n';
+    
+    // Double con default
+    const auto dbl = store.getorset<double>("test.getorset.threshold", 0.95);
+    std::cout << "Double (no existe): " << (dbl.has_value() ? std::to_string(*dbl) : "FAIL") << '\n';
+    
+    std::cout << '\n';
+}
+
 int main(int argc, char* argv[]) {
     std::uint64_t iterations = 100000;
 
@@ -322,6 +350,8 @@ int main(int argc, char* argv[]) {
     }
 
     store_all_types(store);
+
+    demo_getorset(store);
 
     fill_random(store, "test.", iterations);
     std::cout << "Read test (" << iterations << " iterations, consecutive access): " << duration_wrapper(reads_test, store, "test.", iterations) << " µs\n";

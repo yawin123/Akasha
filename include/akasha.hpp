@@ -235,6 +235,39 @@ public:
 		}
 	}
 
+	/**
+	 * @brief Obtiene un valor tipado o lo establece con un default si no existe.
+	 * 
+	 * Si la clave existe, retorna su valor. Si no existe, establece el valor por defecto,
+	 * lo persiste y retorna ese mismo valor.
+	 * 
+	 * Útil para inicialización lazy de valores de configuración.
+	 * 
+	 * @param key_path Ruta completa (incluye dataset).
+	 * @param default_value Valor por defecto a establecer si no existe.
+	 * @return std::optional<T> con el valor encontrado o el default establecido.
+	 */
+	template<typename T>
+	[[nodiscard]] std::optional<T> getorset(std::string_view key_path, const T& default_value) {
+		static_assert(std::is_trivially_copyable_v<T>, 
+			"Type T must be trivially copyable for akasha::Store::getorset<T>");
+		
+		// Intentar obtener el valor existente
+		auto existing = get<T>(key_path);
+		if (existing.has_value()) {
+			return existing;
+		}
+		
+		// Si no existe, escribir el default
+		const auto set_status = set<T>(key_path, default_value);
+		if (set_status == WriteStatus::ok) {
+			return default_value;
+		}
+		
+		// Error al escribir
+		return std::nullopt;
+	}
+
 private:
 	struct Source {
 		std::string id;
@@ -312,6 +345,28 @@ inline std::optional<std::string> Store::get<std::string>(std::string_view key_p
 	}
 	
 	return std::string(bytes->data() + sizeof(std::size_t), bytes->data() + bytes->size());
+}
+
+/**
+ * @brief Especialización para Store::getorset() con std::string.
+ * Obtiene la string o establece el default si no existe.
+ */
+template<>
+inline std::optional<std::string> Store::getorset<std::string>(std::string_view key_path, const std::string& default_value) {
+	// Intentar obtener el valor existente
+	auto existing = get<std::string>(key_path);
+	if (existing.has_value()) {
+		return existing;
+	}
+	
+	// Si no existe, escribir el default
+	const auto set_status = set<std::string>(key_path, default_value);
+	if (set_status == WriteStatus::ok) {
+		return default_value;
+	}
+	
+	// Error al escribir
+	return std::nullopt;
 }
 
 }  // namespace akasha
