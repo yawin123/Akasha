@@ -20,19 +20,22 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 - Evitar copias completas del dataset mapeado hacia estructuras espejo en memoria del proceso.
 - Evitar cambios de API incompatibles a partir de 0.9.0.
 
-## Estado actual (0.6.0)
+## Estado actual (0.8.0)
 
 - Librería estática compilando con CMake.
 - Versión obtenida desde CMake (`AKASHA_VERSION` macro configurada en compilación).
 - Dependencias integradas con Conan (Boost).
-- API core implementada con `Store`, `DatasetView`, `load`, `has`, `get` y notación por puntos.
+- **API core completada**: `Store`, `DatasetView`, `load`, `has`, `get`, `set<T>()`, `clear()`, `compact()`, `last_status()`.
+- Notación por puntos para navegación jerárquica.
 - Backend de almacenamiento persistente con `Boost.Interprocess::managed_mapped_file`.
 - Cada dataset se identifica por `source_id`; duplicados rechazados con `source_already_loaded`.
 - Claves siempre calificadas por dataset (`dataset.algo...`).
 - `get`/`has` no hacen búsqueda cross-dataset: si el dataset no existe, devuelven `std::nullopt`/`false`.
 - Flag `create_if_missing` opcional: si true, crea archivo vacío (mapa raíz vacío) si no existe.
-- Soporte completo de escalares: bool, int64, uint64, double, string.
-- Escritura directa con `set(key_path, value)` y `flush` inmediato.
+- Soporte completo de escalares: bool, int64, uint64, double, string, y structs trivially copyable.
+- Escritura directa con `set<T>(key_path, value)` y `flush` inmediato.
+- **Modelo de errores unificado**: `Status` enum con 10 códigos.
+- **Error tracking**: `last_status()` retorna el último status de operación.
 - Política de crecimiento dinámico del archivo mapeado (`grow + remap` seguro).
 - API de limpieza `clear(key_path={})` con borrado total/dataset/prefijo.
 - Reset determinista al tamaño inicial del archivo en limpiezas completas.
@@ -40,8 +43,9 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 - **Tuning configurable**: `set_performance_tuning()` para inicial_size, grow_step, max_retries.
 - **Compactación explícita**: `compact(dataset_id={})` para optimizar archivos bajo demanda.
 - **Helpers template ergonómicos**: `get<T>(clave)` y `set<T>(clave, valor)` para acceso type-safe.
-- Ejemplo funcional validando round-trip, multihilo y operaciones de 0.6.0.
-- Foco activo: 0.7.0 (modelo de errores y observabilidad).
+- **Estructura como submódulo**: `apps/` → `examples/` con 3 ejemplos funcionales.
+- Compilación limpia sin warnings, ejecución funcional de todos los ejemplos.
+- Foco activo: 0.9.0 (beta de estabilización, API freeze, tests, benchmarks).
 
 ## Hitos por versión
 
@@ -236,18 +240,33 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 
 ## 0.8.0 — Empaquetado y DX de integración
 
-**Meta:** facilitar adopción por terceros.
+**Meta:** facilitar adopción como submódulo de Git (add_subdirectory).
 
 **Entregables:**
 
-- Instalación CMake (`install`, `export`, `find_package`) validada.
-- Ejemplo consumidor externo (fuera del repo) documentado.
-- Ajustes finales de Conan recipe para consumo limpio.
-- Guía de integración en README.
+- Estructura lista para incluir como submódulo: `git submodule add .../akasha vendor/akasha` + `add_subdirectory(vendor/akasha)`.
+- Conan recipe optimizada para usuarios que prefieren package manager (alternativa a submódulo).
+- Batería de ejemplos en carpeta `examples/`:
+  * `quickstart.cpp` — uso básico de load/set/get.
+  * `error_handling.cpp` — validación de Status, last_status().
+  * `comprehensive.cpp` — benchmarks de read/write con timing y demostración de tipos soportados.
+- README.md en inglés: integración clara, API reference, ejemplos inline.
+
+**Estado:** completado.
+
+**Completado:**
+
+- Proyecto renombrado de `apps/` a `examples/` con estructura clara.
+- `quickstart.cpp`: ejemplo mínimo de carga y lectura/escritura.
+- `error_handling.cpp`: validación exhaustiva de códigos Status.
+- `comprehensive.cpp`: tests de performance y demostración de 11 tipos soportados (escalar + string + struct).
+- CMakeLists.txt compilando los 3 ejemplos sin warnings.
+- Validación de compilación limpia, ejecución exitosa de ejemplos.
 
 **Done cuando:**
 
-- Un proyecto externo puede consumir Akasha sin hacks locales.
+- Un developer puede: clonar repo, `add_subdirectory(akasha)`, `target_link_libraries(myapp akasha::akasha)`, compilar y usar.
+- Ejemplos en `examples/` compilan contra el submódulo sin configuración adicional.
 
 ## 0.9.0 — Beta de estabilización
 

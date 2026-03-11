@@ -1,122 +1,150 @@
-# Akasha
+# Akasha — Zero-Copy C++23 Configuration Storage
 
-Akasha es una librería C++23 orientada a la gestión de datos configurables y estructurados, diseñada para cargar múltiples fuentes de datos y exponer su acceso de forma uniforme.
+Akasha is a minimalist C++23 library for storing and retrieving configuration in memory-mapped files (mmap), prioritizing **low latency**, **direct persistence**, and **type safety**.
 
-El objetivo principal es que los consumidores de la librería trabajen con una interfaz simple basada en tres conceptos:
+Designed to be embedded in projects as a Git submodule — no complex build dependencies, no global installation, no binary artifacts.
 
-- **Set de datos**: viene implícito en el primer segmento de la clave.
-- **Clave**: identificador jerárquico con formato mínimo `dataset.algo`.
-- **Valor**: contenido asociado a la clave.
+## Why Akasha?
 
-## Visión del proyecto
+- **Zero-copy reads**: data read directly from mmap, no intermediate buffering.
+- **Direct writes**: values persisted directly to the mapped file in a single atomic operation.
+- **Simple API**: load datasets, type-safe get/set, hierarchical navigation with dot notation.
+- **Low overhead**: no statistics, no trackers, no background workers.
+- **Type-safe templates**: `get<T>()`, `set<T>()` with compile-time validation of copyable types.
+- **Unified error handling**: `Status` enum for diagnostics, no exceptions.
 
-Akasha actúa como una capa de abstracción sobre distintos ficheros de datos. Conceptualmente, puede pensarse como abrir varios documentos tipo JSON y consultar sus claves, pero en este proyecto se empleará:
+## Name Origin
 
-- **Boost.Interprocess managed_mapped_file** como backend de almacenamiento persistente de baja latencia.
-- Un modelo de uso **embebido en proceso único**, enfocado en operaciones rápidas de lectura/escritura.
+**Akasha** comes from Sanskrit **ākāśa** (आकाश), meaning "ether," "space," or "sky." In Indian philosophy, *ākāśa* represents the subtle, all-pervading medium that enables the existence and transmission of all manifestations — a universal space containing all things.
 
-La librería permite cargar *N* ficheros de datos y resolver lecturas sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento.
+The metaphor fits: Akasha is a unified space where configuration data from multiple sources aggregates, organizes, and resolves through a single interface. Just as *ākāśa* is the fundamental medium in philosophy, Akasha is the fundamental storage layer for your application's configuration.
 
-## Modelo de acceso
+## Requirements
 
-El acceso usa claves completas en dot notation y **siempre calificadas por dataset**.
+- **Compiler**: C++23 (GCC 13+, Clang 16+, MSVC 194+)
+- **Dependencies**: Boost.Interprocess (managed automatically by Conan)
+- **OS**: Linux, macOS, Windows
 
-### Reglas de clave
-
-- Formato mínimo: `dataset.algo`.
-- El primer segmento identifica el dataset cargado con `load(source_id, ...)`.
-- No hay búsqueda cross-dataset: si el dataset no existe, `get(...)` devuelve `nullopt`.
-
-Ejemplos:
-
-- `user.core.timeout`
-- `defaults.core.settings.enabled`
-- `user.service.host`
-
-### API actual de carga y consulta
-
-- `load(source_id, file_path, create_if_missing = false)`
-	- Abre/crea un archivo mapeado y asocia `source_id` como dataset lógico.
-	- Si `source_id` ya está cargado, devuelve `source_already_loaded`.
-	- Si el archivo no existe:
-		- `create_if_missing = false` → `file_read_error`
-		- `create_if_missing = true` → crea dataset vacío.
-- `set(key_path, value)`
-	- Escribe directamente sobre el archivo mapeado y hace `flush` inmediato.
-- `get(key_path)` devuelve:
-	- `std::nullopt` si no existe,
-	- `Value` si apunta a hoja,
-	- `DatasetView` si apunta a nodo intermedio (por ejemplo `user.core.settings`).
-
-Este enfoque evita ambigüedad entre fuentes y garantiza resolución determinista por dataset.
-
-## ¿Por qué el nombre Akasha?
-
-El nombre **Akasha** proviene del sánscrito **ākāśa**, término que suele traducirse como “éter”, “espacio” o “cielo”. En tradiciones filosóficas de la India, *ākāśa* se entiende como el medio sutil que contiene o posibilita la existencia y transmisión de las cosas.
-
-Con el tiempo, ese concepto también se popularizó (especialmente en corrientes esotéricas) como la idea de un “registro” o repositorio universal de información. Aunque el proyecto no adopta ese marco espiritual, sí toma la metáfora técnica: una capa común donde datos de múltiples orígenes se agregan, se ordenan y se consultan con una interfaz uniforme.
-
-Por eso **Akasha** encaja con la librería: porque expresa la noción de “espacio unificado de datos”, independientemente del fichero o backend del que provenga cada valor.
-
-## Estado actual
-
-El repositorio está configurado como librería **estática** en **C++23**. Este enfoque facilita encapsular dependencias internas y ofrecer una integración más predecible a los consumidores.
-
-Estructura base actual:
-
-```text
-.
-├── CMakeLists.txt
-├── cmake/BundleStaticArchive.cmake
-├── include/akasha.hpp
-├── src/akasha.cpp
-└── apps/example.cpp
-```
-
-## Dependencias y empaquetado
-
-Akasha usa **Conan** para gestionar sus dependencias:
-
-- **Boost 1.90.0** (especialmente `Boost.Interprocess`)
-
-Las dependencias se especifican en `conanfile.py` y se instalan automáticamente via Conan.
-
-En CMake, Akasha expone dos modos:
-
-- **Modo normal (recomendado por defecto)**: construye `libakasha.a` y enlaza dependencias estáticas en el binario final consumidor.
-- **Modo single-archive (opcional)**: genera `libakasha_bundle.a`, intentando agrupar Akasha y sus archivos estáticos dependientes en un único artefacto.
-
-Opciones disponibles:
-
-- `AKASHA_DEP_TARGETS`: lista separada por `;` con targets estáticos CMake a enlazar como dependencias privadas.
-- `AKASHA_BUNDLE_ARCHIVES`: lista separada por `;` con rutas adicionales a `.a` para incluir en el bundle.
-- `AKASHA_BUILD_SINGLE_ARCHIVE`: `ON/OFF` para activar la creación de `libakasha_bundle.a`.
-
-## Compilación
-
-Primero, instala las dependencias con Conan:
+## Installation as Submodule
 
 ```bash
+git submodule add https://git.yawin.es/personal/akasha.git vendor/akasha
+```
+
+## Building
+
+### Build Akasha Locally
+
+After cloning (or adding as submodule), install dependencies and build:
+
+```bash
+cd vendor/akasha  # or your Akasha checkout
 conan install . --output-folder=build --build=missing
-```
-
-Build normal:
-
-```bash
 cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake
 cmake --build .
 ```
 
-Build con bundle (archivo único):
+### Integrate into Your Project
 
-```bash
-cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
-	-DAKASHA_DEP_TARGETS="dep1;dep2" \
-	-DAKASHA_BUILD_SINGLE_ARCHIVE=ON
-cmake --build . --target akasha_bundle
+In your `CMakeLists.txt`:
+
+```cmake
+add_subdirectory(vendor/akasha)
+target_link_libraries(myapp akasha::akasha)
 ```
 
-> Nota: el modo `single-archive` usa `ar/ranlib` y está orientado a toolchains tipo GNU/Unix.
+## Quick Start
 
+```cpp
+#include "akasha.hpp"
+
+akasha::Store store;
+
+// Load dataset (persistent file)
+auto status = store.load("app_config", "/path/to/config.db", true);
+if (status != akasha::Status::ok) {
+    std::cerr << "Error: " << static_cast<int>(status) << '\n';
+}
+
+// Write typed values
+store.set<int64_t>("app_config.timeout", 30);
+store.set<bool>("app_config.debug", true);
+store.set<std::string>("app_config.name", "MyApp");
+
+// Read values
+auto timeout = store.get<int64_t>("app_config.timeout");
+if (timeout.has_value()) {
+    std::cout << "Timeout: " << timeout.value() << " seconds\n";
+}
+
+// Get or set default
+auto max_retries = store.getorset<int64_t>("app_config.max_retries", 5);
+```
+
+See more examples in [examples/](examples/).
+
+## Development (Local Build)
+
+```bash
+conan install . --output-folder=build --build=missing
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake
+cmake --build .
+./akasha_example
+```
+
+## API Reference
+
+Full documentation in [include/akasha.hpp](include/akasha.hpp).
+
+### Store Methods
+
+- `load(source_id, file_path, create_if_missing)` → `Status`
+- `set<T>(key_path, value)` → `Status`
+- `get<T>(key_path)` → `std::optional<T>`
+- `getorset<T>(key_path, default)` → `std::optional<T>`
+- `has(key_path)` → `bool`
+- `clear(key_path = {})` → `Status`
+- `compact(dataset_id = {})` → `Status`
+- `last_status()` → `Status`
+
+### Supported Types
+
+- Scalars: `bool`, `char`, `int32_t`, `uint32_t`, `int64_t`, `uint64_t`, `double`, `float`
+- Strings: `std::string`
+- Structs: Any `trivially_copyable` type
+
+### Status Enum
+
+Error codes: `ok`, `invalid_key_path`, `key_conflict`, `file_read_error`, `file_write_error`, `file_not_found`, `file_full`, `parse_error`, `dataset_not_found`, `source_already_loaded`.
+
+## Examples
+
+### Quickstart
+
+```cpp
+akasha::Store store;
+store.load("config", "/tmp/app.db", true);
+store.set("config.timeout", 30);
+auto val = store.get<int64_t>("config.timeout");
+```
+
+### Hierarchical Navigation
+
+```cpp
+store.set<std::string>("db.postgres.host", "localhost");
+store.set<int64_t>("db.postgres.port", 5432);
+
+auto db = store.get<akasha::Store::DatasetView>("db");
+if (db) {
+    auto pg = db->get<akasha::Store::DatasetView>("postgres");
+    if (pg) {
+        auto host = pg->get<std::string>("host");
+    }
+}
+```
+
+### Error Handling
+
+See [examples/error_handling.cpp](examples/error_handling.cpp) for complete examples of Status validation.

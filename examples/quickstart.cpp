@@ -1,0 +1,56 @@
+#include <iostream>
+#include "akasha.hpp"
+
+int main() {
+    akasha::Store store;
+    
+    // Cargar un archivo (se crea si no existe)
+    auto status = store.load("config", "/tmp/myconfig.db", true);
+    if (status != akasha::Status::ok) {
+        std::cerr << "Error loading config: " << static_cast<int>(status) << '\n';
+        return 1;
+    }
+    
+    // Escribir valores
+    status = store.set<int64_t>("config.timeout", 30);
+    if (status != akasha::Status::ok) {
+        std::cerr << "Error setting timeout\n";
+        return 1;
+    }
+    
+    status = store.set<bool>("config.debug", true);
+    if (status != akasha::Status::ok) {
+        std::cerr << "Error setting debug\n";
+        return 1;
+    }
+    
+    status = store.set<std::string>("config.name", "MyApp");
+    if (status != akasha::Status::ok) {
+        std::cerr << "Error setting name\n";
+        return 1;
+    }
+    
+    // Leer valores
+    auto timeout = store.get<int64_t>("config.timeout");
+    if (timeout.has_value()) {
+        std::cout << "Timeout: " << timeout.value() << " seconds\n";
+    }
+    
+    auto debug = store.get<bool>("config.debug");
+    if (debug.has_value()) {
+        std::cout << "Debug: " << (debug.value() ? "enabled" : "disabled") << '\n';
+    }
+    
+    auto name = store.get<std::string>("config.name");
+    if (name.has_value()) {
+        std::cout << "App name: " << name.value() << '\n';
+    }
+    
+    // Obtener o establecer default
+    auto max_retries = store.getorset<int64_t>("config.max_retries", 5);
+    if (max_retries.has_value()) {
+        std::cout << "Max retries: " << max_retries.value() << '\n';
+    }
+    
+    return 0;
+}

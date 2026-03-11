@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 0.6.0 LANGUAGES CXX)
+project(Akasha VERSION 0.8.0 LANGUAGES CXX)
 
 option(BUILD_EXAMPLE "Build example application" ON)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
@@ -41,8 +41,16 @@ if(AKASHA_DEP_TARGETS)
 endif()
 
 if(BUILD_EXAMPLE)
-    add_executable(akasha_example apps/example.cpp)
+    # Ejemplo principal (comprehensive)
+    add_executable(akasha_example examples/comprehensive.cpp)
     target_link_libraries(akasha_example PRIVATE akasha::akasha)
+    
+    # Ejemplos adicionales
+    add_executable(akasha_quickstart examples/quickstart.cpp)
+    target_link_libraries(akasha_quickstart PRIVATE akasha::akasha)
+    
+    add_executable(akasha_error_handling examples/error_handling.cpp)
+    target_link_libraries(akasha_error_handling PRIVATE akasha::akasha)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)
