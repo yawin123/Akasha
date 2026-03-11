@@ -51,7 +51,7 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 
 **Entregables:**
 
-- Tipos base: `KeyPath`, `Value`, `ValueView`, `DatasetSource`.
+- Tipos base: `KeyPath`, `Value`, `DatasetSource`.
 - API mínima:
   - `load(source)`
   - `has(key_path)`

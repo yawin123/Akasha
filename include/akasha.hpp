@@ -44,14 +44,6 @@ using KeyPath = std::string;
 using Value = std::variant<bool, std::int64_t, std::uint64_t, double, std::string>;
 
 /**
- * @brief Vista de lectura de un valor.
- *
- * Es equivalente a Value, pero para cadenas usa std::string_view para
- * evitar copias durante consultas.
- */
-using ValueView = std::variant<bool, std::int64_t, std::uint64_t, double, std::string_view>;
-
-/**
  * @brief Fuente de carga en memoria.
  *
  * Mapea clave completa -> valor. Ejemplo:
@@ -119,10 +111,10 @@ public:
 		 * @param key_path Ruta relativa a la vista actual.
 		 * @return
 		 * - std::nullopt si no existe.
-		 * - ValueView si apunta a una hoja.
+		 * - Value si apunta a una hoja.
 		 * - DatasetView si apunta a un nodo intermedio.
 		 */
-		[[nodiscard]] std::optional<std::variant<ValueView, DatasetView>> get(std::string_view key_path) const;
+		[[nodiscard]] std::optional<std::variant<Value, DatasetView>> get(std::string_view key_path) const;
 
 		/**
 		 * @brief Obtiene la lista de claves directas disponibles en esta vista.
@@ -144,10 +136,10 @@ public:
 	 * @brief Resultado de una consulta sobre Store.
 	 *
 	 * Puede contener:
-	 * - ValueView (hoja)
+	 * - Value (hoja)
 	 * - DatasetView (subárbol)
 	 */
-	using QueryResult = std::variant<ValueView, DatasetView>;
+	using QueryResult = std::variant<Value, DatasetView>;
 
 	/**
 	 * @brief Carga configuración desde un archivo de memoria mapeada.
@@ -215,7 +207,7 @@ public:
 	 * @param key_path Ruta completa (incluye dataset).
 	 * @return
 	 * - std::nullopt si no existe.
-	 * - ValueView si apunta a una hoja.
+	 * - Value si apunta a una hoja.
 	 * - DatasetView si apunta a un nodo intermedio.
 	 */
 	[[nodiscard]] std::optional<QueryResult> get(std::string_view key_path) const;
@@ -226,7 +218,7 @@ public:
 	 * Realiza un `get()` normal y extrae el tipo T esperado.
 	 * Si el valor no existe o tiene tipo diferente, devuelve std::nullopt.
 	 *
-	 * Tipos soportados: bool, int64_t, uint64_t, double, std::string_view.
+	 * Tipos soportados: bool, int64_t, uint64_t, double, std::string.
 	 *
 	 * @param key_path Ruta completa de la clave (incluye dataset).
 	 * @return std::optional<T> con el valor tipado, o std::nullopt si no existe o tipo no coincide.
@@ -238,12 +230,12 @@ public:
 			return std::nullopt;
 		}
 
-		const auto* value_view = std::get_if<ValueView>(&*result);
-		if (value_view == nullptr) {
+		const auto* value = std::get_if<Value>(&*result);
+		if (value == nullptr) {
 			return std::nullopt;
 		}
 
-		const auto* typed_value = std::get_if<T>(value_view);
+		const auto* typed_value = std::get_if<T>(value);
 		if (typed_value == nullptr) {
 			return std::nullopt;
 		}

@@ -113,20 +113,20 @@ struct InterprocessValue {
         return *this;
     }
 
-    // Conversión a ValueView
-    [[nodiscard]] std::optional<akasha::ValueView> to_view() const {
+    // Conversión a Value
+    [[nodiscard]] std::optional<akasha::Value> to_view() const {
         switch (type) {
             case Type::BOOL:
-                return akasha::ValueView{data.b};
+                return akasha::Value{data.b};
             case Type::INT64:
-                return akasha::ValueView{data.i64};
+                return akasha::Value{data.i64};
             case Type::UINT64:
-                return akasha::ValueView{data.u64};
+                return akasha::Value{data.u64};
             case Type::DOUBLE:
-                return akasha::ValueView{data.d};
+                return akasha::Value{data.d};
             case Type::STRING:
                 if (data.str) {
-                    return akasha::ValueView{std::string_view{data.str->c_str(), data.str->size()}};
+                    return akasha::Value{std::string{data.str->c_str(), data.str->size()}};
                 }
                 return std::nullopt;
             default:
@@ -159,18 +159,8 @@ constexpr std::size_t kDefaultInitialMappedFileSize = 64 * 1024;
 constexpr std::size_t kDefaultInitialGrowStep = kDefaultInitialMappedFileSize / 2;
 constexpr int kDefaultMaxGrowRetries = 8;
 
-[[nodiscard]] std::optional<akasha::ValueView> make_value_view(const akasha::Value& value) {
-    return std::visit(
-        [](const auto& typed_value) -> akasha::ValueView {
-            using TypedValue = std::decay_t<decltype(typed_value)>;
-            if constexpr (std::is_same_v<TypedValue, std::string>) {
-                return std::string_view{typed_value};
-            } else {
-                return typed_value;
-            }
-        },
-        value
-    );
+[[nodiscard]] std::optional<akasha::Value> make_value_view(const akasha::Value& value) {
+    return value;
 }
 
 }  // namespace
@@ -806,7 +796,7 @@ bool Store::DatasetView::has(std::string_view key_path) const {
     return get(key_path).has_value();
 }
 
-std::optional<std::variant<ValueView, Store::DatasetView>> Store::DatasetView::get(std::string_view key_path) const {
+std::optional<std::variant<Value, Store::DatasetView>> Store::DatasetView::get(std::string_view key_path) const {
     if (source_ == nullptr || !source_->file_lock) {
         return std::nullopt;
     }

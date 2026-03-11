@@ -22,7 +22,7 @@ size_t countKeysRecursive(const akasha::Store::DatasetView& view)
             continue;
         }
 
-        if (std::holds_alternative<akasha::ValueView>(*entry)) {
+        if (std::holds_alternative<akasha::Value>(*entry)) {
             ++total;
             continue;
         }

@@ -45,7 +45,7 @@ Ejemplos:
 	- Escribe directamente sobre el archivo mapeado y hace `flush` inmediato.
 - `get(key_path)` devuelve:
 	- `std::nullopt` si no existe,
-	- `ValueView` si apunta a hoja,
+	- `Value` si apunta a hoja,
 	- `DatasetView` si apunta a nodo intermedio (por ejemplo `user.core.settings`).
 
 Este enfoque evita ambigüedad entre fuentes y garantiza resolución determinista por dataset.
