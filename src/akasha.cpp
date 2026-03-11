@@ -13,11 +13,15 @@
 #include <string>
 #include <type_traits>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 namespace {
 
 namespace bip = boost::interprocess;
+
+// INTERNAL: Tipo Value solo para uso interno (no expuesto al usuario)
+using InternalValue = std::variant<bool, std::int64_t, std::uint64_t, double, std::string>;
 
 // Segment manager para el archivo mapeado
 using SegmentManager = bip::managed_mapped_file::segment_manager;
@@ -28,120 +32,8 @@ using CharAllocator = bip::allocator<char, SegmentManager>;
 // String que vive en el archivo mapeado
 using InterprocessString = bip::basic_string<char, std::char_traits<char>, CharAllocator>;
 
-// Valor que vive en el archivo mapeado (union tagged para eficiencia)
-struct InterprocessValue {
-    enum class Type : std::uint8_t {
-        NONE = 0,
-        BOOL,
-        INT64,
-        UINT64,
-        DOUBLE,
-        STRING
-    };
-
-    Type type{Type::NONE};
-
-    union Data {
-        bool b;
-        std::int64_t i64;
-        std::uint64_t u64;
-        double d;
-        bip::offset_ptr<InterprocessString> str;
-
-        Data() : i64(0) {}
-        ~Data() {}
-    } data;
-
-    InterprocessValue() = default;
-
-    // Conversión desde Value normal
-    InterprocessValue(const akasha::Value& value, SegmentManager* segment_mgr) {
-        std::visit(
-            [this, segment_mgr](const auto& typed_value) {
-                using TypedValue = std::decay_t<decltype(typed_value)>;
-                if constexpr (std::is_same_v<TypedValue, bool>) {
-                    type = Type::BOOL;
-                    data.b = typed_value;
-                } else if constexpr (std::is_same_v<TypedValue, std::int64_t>) {
-                    type = Type::INT64;
-                    data.i64 = typed_value;
-                } else if constexpr (std::is_same_v<TypedValue, std::uint64_t>) {
-                    type = Type::UINT64;
-                    data.u64 = typed_value;
-                } else if constexpr (std::is_same_v<TypedValue, double>) {
-                    type = Type::DOUBLE;
-                    data.d = typed_value;
-                } else if constexpr (std::is_same_v<TypedValue, std::string>) {
-                    type = Type::STRING;
-                    auto* str_ptr = segment_mgr->construct<InterprocessString>(bip::anonymous_instance)(
-                        typed_value.c_str(), segment_mgr->get_allocator<char>()
-                    );
-                    data.str = str_ptr;
-                }
-            },
-            value
-        );
-    }
-
-    InterprocessValue(const InterprocessValue& other) {
-        *this = other;
-    }
-
-    InterprocessValue& operator=(const InterprocessValue& other) {
-        type = other.type;
-        switch (other.type) {
-            case Type::BOOL:
-                data.b = other.data.b;
-                break;
-            case Type::INT64:
-                data.i64 = other.data.i64;
-                break;
-            case Type::UINT64:
-                data.u64 = other.data.u64;
-                break;
-            case Type::DOUBLE:
-                data.d = other.data.d;
-                break;
-            case Type::STRING:
-                data.str = other.data.str;
-                break;
-            case Type::NONE:
-            default:
-                data.i64 = 0;
-                break;
-        }
-        return *this;
-    }
-
-    // Conversión a Value
-    [[nodiscard]] std::optional<akasha::Value> to_view() const {
-        switch (type) {
-            case Type::BOOL:
-                return akasha::Value{data.b};
-            case Type::INT64:
-                return akasha::Value{data.i64};
-            case Type::UINT64:
-                return akasha::Value{data.u64};
-            case Type::DOUBLE:
-                return akasha::Value{data.d};
-            case Type::STRING:
-                if (data.str) {
-                    return akasha::Value{std::string{data.str->c_str(), data.str->size()}};
-                }
-                return std::nullopt;
-            default:
-                return std::nullopt;
-        }
-    }
-
-    void destroy(SegmentManager* segment_mgr) {
-        if (type == Type::STRING && data.str) {
-            segment_mgr->destroy_ptr(data.str.get());
-            data.str = nullptr;
-        }
-        type = Type::NONE;
-    }
-};
+// Valor = simplemente InterprocessString (bytes crudos)
+using InterprocessValue = InterprocessString;
 
 // Comparador para InterprocessString
 struct InterprocessStringLess {
@@ -158,10 +50,6 @@ constexpr const char* kDatasetMapName = "akasha_root";
 constexpr std::size_t kDefaultInitialMappedFileSize = 64 * 1024;
 constexpr std::size_t kDefaultInitialGrowStep = kDefaultInitialMappedFileSize / 2;
 constexpr int kDefaultMaxGrowRetries = 8;
-
-[[nodiscard]] std::optional<akasha::Value> make_value_view(const akasha::Value& value) {
-    return value;
-}
 
 }  // namespace
 
@@ -464,6 +352,7 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
         new_source.storage = storage;
         new_source.file_lock = file_lock;
         new_source.dataset_map = dataset_map;
+        new_source.store = this;
 
         sources_.push_back(std::move(new_source));
         return LoadStatus::ok;
@@ -489,6 +378,7 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
                 new_source.storage = storage;
                 new_source.file_lock = file_lock;
                 new_source.dataset_map = dataset_map;
+                new_source.store = this;
 
                 sources_.push_back(std::move(new_source));
                 return LoadStatus::ok;
@@ -500,7 +390,147 @@ LoadStatus Store::load(std::string_view source_id, std::string_view file_path, b
     }
 }
 
-WriteStatus Store::set(std::string_view key_path, const Value& value) {
+WriteStatus Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size) {
+    std::vector<std::string_view> segments;
+    if (!split_key_path(key_path, segments) || segments.size() < 2) {
+        return WriteStatus::invalid_key_path;
+    }
+
+    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
+
+    const std::string_view dataset_id = segments.front();
+    Source* source = find_source(dataset_id);
+    if (source == nullptr) {
+        return WriteStatus::dataset_not_found;
+    }
+
+    if (!source->file_lock) {
+        return WriteStatus::file_write_error;
+    }
+
+    std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
+
+    if (!source->dataset_map || !source->storage) {
+        return WriteStatus::file_write_error;
+    }
+
+    // Construir la clave sin el prefijo del dataset
+    std::string key;
+    for (std::size_t i = 1; i < segments.size(); ++i) {
+        if (i > 1) {
+            key += '.';
+        }
+        key += segments[i];
+    }
+
+    std::size_t grow_step = initial_grow_step_.load(std::memory_order_relaxed);
+    const int max_grow_retries = max_grow_retries_.load(std::memory_order_relaxed);
+
+    for (int attempt = 0; attempt <= max_grow_retries; ++attempt) {
+        try {
+            auto* segment_mgr = source->storage->file.get_segment_manager();
+            auto* map = as_dataset_map(source->dataset_map);
+            auto allocator = segment_mgr->get_allocator<char>();
+
+            // Crear InterprocessString para la clave
+            InterprocessString ipc_key(key.c_str(), allocator);
+
+            // Crear InterprocessValue (InterprocessString) con los bytes
+            InterprocessValue ipc_value(static_cast<const char*>(bytes), size, allocator);
+
+            // Insertar o reemplazar en el map (escritura directa en mmap)
+            auto it = map->find(ipc_key);
+            if (it == map->end()) {
+                map->emplace(ipc_key, ipc_value);
+            } else {
+                it->second = ipc_value;
+            }
+
+            if (!source->storage->file.flush()) {
+                return WriteStatus::file_write_error;
+            }
+
+            return WriteStatus::ok;
+        } catch (const bip::interprocess_exception&) {
+            if (attempt == max_grow_retries) {
+                return WriteStatus::file_write_error;
+            }
+
+            const std::string source_file_path = source->file_path;
+            const std::size_t current_file_size = source->storage->file.get_size();
+            const std::size_t base_step = initial_grow_step_.load(std::memory_order_relaxed);
+            const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
+
+            if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
+                return WriteStatus::file_write_error;
+            }
+
+            source = find_source(dataset_id);
+            if (source == nullptr || !source->storage || !source->dataset_map) {
+                return WriteStatus::file_write_error;
+            }
+
+            grow_step = dynamic_step * 2;
+        }
+    }
+
+    return WriteStatus::file_write_error;
+}
+
+std::optional<std::vector<char>> Store::get_bytes_impl(std::string_view key_path, std::size_t expected_size) const {
+    std::vector<std::string_view> segments;
+    if (!split_key_path(key_path, segments) || segments.empty()) {
+        return std::nullopt;
+    }
+
+    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
+
+    const std::string_view dataset_id = segments.front();
+    auto source_it = std::find_if(sources_.begin(), sources_.end(), [dataset_id](const Source& source) {
+        return source.id == dataset_id;
+    });
+
+    if (source_it == sources_.end()) {
+        return std::nullopt;
+    }
+
+    const Source& source = *source_it;
+    if (!source.file_lock) {
+        return std::nullopt;
+    }
+
+    std::shared_lock<std::shared_mutex> read_guard(*source.file_lock);
+
+    if (!source.dataset_map || !source.storage) {
+        return std::nullopt;
+    }
+
+    // Construir la clave
+    std::string key;
+    for (std::size_t i = 1; i < segments.size(); ++i) {
+        if (i > 1) {
+            key += '.';
+        }
+        key += segments[i];
+    }
+
+    // Buscar clave exacta
+    auto* map = as_dataset_map(source.dataset_map);
+    auto it = map->find(InterprocessString(key.c_str(), source.storage->file.get_segment_manager()->get_allocator<char>()));
+    if (it != map->end()) {
+        // it->second es el InterprocessValue (InterprocessString)
+        const auto& data_bytes = it->second;
+        
+        // Retornar los bytes (sin verificar tamaño - responsabilidad del usuario)
+        std::vector<char> result(data_bytes.c_str(), data_bytes.c_str() + data_bytes.size());
+        return result;
+    }
+
+    return std::nullopt;
+}
+
+/*
+WriteStatus Store::set_internal(std::string_view key_path, const InternalValue& value) {
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.size() < 2) {
         return WriteStatus::invalid_key_path;
@@ -585,6 +615,7 @@ WriteStatus Store::set(std::string_view key_path, const Value& value) {
 
     return WriteStatus::file_write_error;
 }
+*/
 
 WriteStatus Store::clear(std::string_view key_path) {
     std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
@@ -661,7 +692,6 @@ WriteStatus Store::clear(std::string_view key_path) {
     for (auto it = map->begin(); it != map->end();) {
         const std::string_view current_key(it->first.c_str(), it->first.size());
         if (current_key == prefix || current_key.starts_with(prefix_with_dot)) {
-            it->second.destroy(source->storage->file.get_segment_manager());
             it = map->erase(it);
         } else {
             ++it;
@@ -726,7 +756,7 @@ bool Store::has(std::string_view key_path) const {
     return get(key_path).has_value();
 }
 
-std::optional<Store::QueryResult> Store::get(std::string_view key_path) const {
+std::optional<akasha::Store::DatasetView> Store::get_dataset_view(std::string_view key_path) const {
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.empty()) {
         return std::nullopt;
@@ -756,7 +786,7 @@ std::optional<Store::QueryResult> Store::get(std::string_view key_path) const {
 
     // Caso 1: Solo dataset (sin clave específica) -> retornar DatasetView
     if (segments.size() == 1) {
-        return QueryResult{DatasetView{&source}};
+        return DatasetView{&source};
     }
 
     // Caso 2: Clave específica -> buscar en el map
@@ -772,10 +802,7 @@ std::optional<Store::QueryResult> Store::get(std::string_view key_path) const {
     auto* map = as_dataset_map(source.dataset_map);
     auto it = map->find(InterprocessString(key.c_str(), source.storage->file.get_segment_manager()->get_allocator<char>()));
     if (it != map->end()) {
-        auto value_view = it->second.to_view();
-        if (value_view.has_value()) {
-            return QueryResult{*value_view};
-        }
+        // Encontrado como valor -> no hay View, solo bytes
         return std::nullopt;
     }
 
@@ -784,8 +811,8 @@ std::optional<Store::QueryResult> Store::get(std::string_view key_path) const {
     for (const auto& [ipc_key, ipc_value] : *map) {
         std::string_view full_key(ipc_key.c_str(), ipc_key.size());
         if (full_key.starts_with(prefix) || full_key == key) {
-            // Hay al menos una clave con este prefijo -> es un subárbol
-            return QueryResult{DatasetView{&source, key}};
+            // Hay al menos una clave con este prefijo -> es un sub<árbol
+            return DatasetView{&source, key};
         }
     }
 
@@ -796,7 +823,9 @@ bool Store::DatasetView::has(std::string_view key_path) const {
     return get(key_path).has_value();
 }
 
-std::optional<std::variant<Value, Store::DatasetView>> Store::DatasetView::get(std::string_view key_path) const {
+// TODO: Implementar get_dataset_view() para DatasetView si es necesario
+/*
+std::optional<akasha::Store::DatasetView> Store::DatasetView::get_dataset_view(std::string_view key_path) const {
     if (source_ == nullptr || !source_->file_lock) {
         return std::nullopt;
     }
@@ -819,10 +848,7 @@ std::optional<std::variant<Value, Store::DatasetView>> Store::DatasetView::get(s
     // Buscar clave exacta
     auto it = map->find(InterprocessString(full_key.c_str(), source_->storage->file.get_segment_manager()->get_allocator<char>()));
     if (it != map->end()) {
-        auto value_view = it->second.to_view();
-        if (value_view.has_value()) {
-            return *value_view;
-        }
+        // Encontrado como valor -> no hay View, solo bytes
         return std::nullopt;
     }
 
@@ -837,6 +863,7 @@ std::optional<std::variant<Value, Store::DatasetView>> Store::DatasetView::get(s
 
     return std::nullopt;
 }
+*/
 
 std::vector<std::string> Store::DatasetView::keys() const {
     std::vector<std::string> result;

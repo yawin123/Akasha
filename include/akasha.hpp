@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <mutex>
@@ -11,7 +12,6 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace akasha {
@@ -40,18 +40,6 @@ namespace akasha {
  */
 using KeyPath = std::string;
 
-/** @brief Tipo de valor persistido en Akasha. */
-using Value = std::variant<bool, std::int64_t, std::uint64_t, double, std::string>;
-
-/**
- * @brief Fuente de carga en memoria.
- *
- * Mapea clave completa -> valor. Ejemplo:
- * - "core.timeout" -> 30
- * - "core.settings.enabled" -> true
- */
-using DatasetSource = std::unordered_map<KeyPath, Value>;
-
 /** @brief Resultado de una operación de carga. */
 enum class LoadStatus {
 	ok,
@@ -59,7 +47,6 @@ enum class LoadStatus {
 	key_conflict,
 	file_read_error,
 	parse_error,
-	unsupported_value_type,
 	source_already_loaded,
 };
 
@@ -107,14 +94,35 @@ public:
 		[[nodiscard]] bool has(std::string_view key_path) const;
 
 		/**
-		 * @brief Obtiene un valor o sub-vista relativa.
+		 * @brief Obtiene un valor tipado relativo a esta vista.
 		 * @param key_path Ruta relativa a la vista actual.
-		 * @return
-		 * - std::nullopt si no existe.
-		 * - Value si apunta a una hoja.
-		 * - DatasetView si apunta a un nodo intermedio.
+		 * @return std::optional<T> con el valor si existe, std::nullopt en caso contrario.
+		 * @note El usuario es responsable del tipo T. Si no coincide con los datos, resultado indefinido.
 		 */
-		[[nodiscard]] std::optional<std::variant<Value, DatasetView>> get(std::string_view key_path) const;
+		template<typename T = DatasetView>
+		[[nodiscard]] std::optional<T> get(std::string_view key_path) const {
+			if (source_ == nullptr) {
+				return std::nullopt;
+			}
+
+			// Construir la clave completa
+			std::string full_key = prefix_;
+			if (!prefix_.empty() && !key_path.empty()) {
+				full_key += '.';
+			}
+			full_key.append(key_path);
+
+			// Si T es DatasetView, retornar una vista
+			if constexpr (std::is_same_v<T, DatasetView>) {
+				return DatasetView(source_, full_key);
+			} else {
+				// Para otros tipos T, acceder al Store backend
+				if (source_->store == nullptr) {
+					return std::nullopt;
+				}
+				return source_->store->get<T>(full_key);
+			}
+		}
 
 		/**
 		 * @brief Obtiene la lista de claves directas disponibles en esta vista.
@@ -131,15 +139,6 @@ public:
 		const Source* source_{nullptr};
 		std::string prefix_;
 	};
-
-	/**
-	 * @brief Resultado de una consulta sobre Store.
-	 *
-	 * Puede contener:
-	 * - Value (hoja)
-	 * - DatasetView (subárbol)
-	 */
-	using QueryResult = std::variant<Value, DatasetView>;
 
 	/**
 	 * @brief Carga configuración desde un archivo de memoria mapeada.
@@ -162,12 +161,20 @@ public:
 	);
 
 	/**
-	 * @brief Establece o reemplaza un valor hoja en una clave calificada por dataset.
+	 * @brief Establece o reemplaza un valor hoja tipado en una clave calificada por dataset.
 	 *
-	 * Ejemplo: set("user.core.timeout", 90)
-	 * La escritura se realiza directamente en el managed_mapped_file (sin reserialización).
+	 * Ejemplo: set<int64_t>("user.core.timeout", 90)
+	 * La escritura se realiza directamente en el managed_mapped_file como bytes crudos.
+	 * El usuario es 100% responsable de que el tipo T sea consistente al leer.
 	 */
-	[[nodiscard]] WriteStatus set(std::string_view key_path, const Value& value);
+	template<typename T>
+	[[nodiscard]] WriteStatus set(std::string_view key_path, const T& value) {
+		static_assert(std::is_trivially_copyable_v<T>, 
+			"Type T must be trivially copyable for akasha::Store::set<T>");
+		
+		const char* bytes = reinterpret_cast<const char*>(&value);
+		return set_bytes_impl(key_path, bytes, sizeof(T));
+	}
 
 	/**
 	 * @brief Ajusta parámetros de rendimiento local para nuevos crecimientos/creaciones.
@@ -203,74 +210,28 @@ public:
 	[[nodiscard]] bool has(std::string_view key_path) const;
 
 	/**
-	 * @brief Consulta una ruta completa.
+	 * @brief Consulta una ruta completa tipada o retorna DatasetView.
 	 * @param key_path Ruta completa (incluye dataset).
-	 * @return
-	 * - std::nullopt si no existe.
-	 * - Value si apunta a una hoja.
-	 * - DatasetView si apunta a un nodo intermedio.
+	 * @return std::optional<T> con el valor si existe, std::nullopt en caso contrario.
+	 * @note El usuario es responsable del tipo T. Si no coincide con los datos, resultado indefinido.
 	 */
-	[[nodiscard]] std::optional<QueryResult> get(std::string_view key_path) const;
-
-	/**
-	 * @brief Obtiene un valor tipado de forma segura.
-	 *
-	 * Realiza un `get()` normal y extrae el tipo T esperado.
-	 * Si el valor no existe o tiene tipo diferente, devuelve std::nullopt.
-	 *
-	 * Tipos soportados: bool, int64_t, uint64_t, double, std::string.
-	 *
-	 * @param key_path Ruta completa de la clave (incluye dataset).
-	 * @return std::optional<T> con el valor tipado, o std::nullopt si no existe o tipo no coincide.
-	 */
-	template<typename T>
+	template<typename T = DatasetView>
 	[[nodiscard]] std::optional<T> get(std::string_view key_path) const {
-		const auto result = this->Store::get(key_path);
-		if (!result.has_value()) {
-			return std::nullopt;
-		}
-
-		const auto* value = std::get_if<Value>(&*result);
-		if (value == nullptr) {
-			return std::nullopt;
-		}
-
-		const auto* typed_value = std::get_if<T>(value);
-		if (typed_value == nullptr) {
-			return std::nullopt;
-		}
-
-		return *typed_value;
-	}
-
-	/**
-	 * @brief Establece un valor con un tipo específico.
-	 *
-	 * Simplifica la creación de Value a partir de un tipo T.
-	 * La actualización se registra en las métricas como un `set()` normal.
-	 *
-	 * Tipos soportados: bool, int64_t, uint64_t, double, std::string, std::string_view.
-	 *
-	 * @param key_path Ruta completa de la clave (incluye dataset).
-	 * @param value Valor tipado a persistir.
-	 * @return WriteStatus de la operación.
-	 */
-	template<typename T>
-	[[nodiscard]] WriteStatus set(std::string_view key_path, const T& value) {
-		// Construir Value genérico según el tipo
-		if constexpr (std::is_same_v<T, std::string_view>) {
-			return this->Store::set(key_path, Value{std::string{value}});
-		} else if constexpr (std::is_same_v<T, const char*>) {
-			return this->Store::set(key_path, Value{std::string{value}});
-		} else if constexpr (std::is_same_v<T, bool> ||
-							  std::is_same_v<T, std::int64_t> ||
-							  std::is_same_v<T, std::uint64_t> ||
-							  std::is_same_v<T, double> ||
-							  std::is_same_v<T, std::string>) {
-			return this->Store::set(key_path, Value{value});
+		// Si T es DatasetView, retornar una vista
+		if constexpr (std::is_same_v<T, DatasetView>) {
+			return get_dataset_view(key_path);
 		} else {
-			// Tipo no soportado: compilación fallará si se intenta usar
-			static_assert(false, "Unsupported type for akasha::Store::set<T>()");
+			static_assert(std::is_trivially_copyable_v<T>, 
+				"Type T must be trivially copyable for akasha::Store::get<T>");
+			
+			// Leer bytes genéricos y interpretar como T
+			auto bytes = get_bytes_impl(key_path, sizeof(T));
+			if (!bytes.has_value()) {
+				return std::nullopt;
+			}
+			
+			// Reinterpret bytes como T
+			return *reinterpret_cast<const T*>(bytes->data());
 		}
 	}
 
@@ -281,11 +242,15 @@ private:
 		std::shared_ptr<MappedFileStorage> storage;
 		std::shared_ptr<std::shared_mutex> file_lock;
 		void* dataset_map{nullptr};
+		Store* store{nullptr};
 	};
 
 	[[nodiscard]] static bool split_key_path(std::string_view key_path, std::vector<std::string_view>& segments);
 	[[nodiscard]] Source* find_source(std::string_view source_id);
 	[[nodiscard]] const Source* find_source(std::string_view source_id) const;
+	[[nodiscard]] std::optional<DatasetView> get_dataset_view(std::string_view key_path) const;
+	[[nodiscard]] WriteStatus set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size);
+	[[nodiscard]] std::optional<std::vector<char>> get_bytes_impl(std::string_view key_path, std::size_t expected_size) const;
 	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
 	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
 	[[nodiscard]] bool shrink_and_remap_sources_for_path(const std::string& file_path);
@@ -299,5 +264,54 @@ private:
 	std::atomic<std::size_t> initial_grow_step_{(64 * 1024) / 2};
 	std::atomic<int> max_grow_retries_{8};
 };
+
+// Template specializations for std::string outside the class scope
+
+/**
+ * @brief Especialización para Store::set() con std::string.
+ * Serializa la string como [size_t length][char data].
+ */
+template<>
+inline akasha::WriteStatus Store::set<std::string>(std::string_view key_path, const std::string& value) {
+	// Serializar: [size_t length][char data]
+	std::vector<char> buffer;
+	buffer.resize(sizeof(std::size_t) + value.size());
+	
+	std::size_t len = value.size();
+	std::memcpy(buffer.data(), &len, sizeof(std::size_t));
+	if (len > 0) {
+		std::memcpy(buffer.data() + sizeof(std::size_t), value.data(), len);
+	}
+	
+	return set_bytes_impl(key_path, buffer.data(), buffer.size());
+}
+
+/**
+ * @brief Especialización para Store::get() con std::string.
+ * Deserializa la string desde [size_t length][char data].
+ */
+template<>
+inline std::optional<std::string> Store::get<std::string>(std::string_view key_path) const {
+	// Necesitamos al menos sizeof(size_t) para la longitud
+	auto bytes = get_bytes_impl(key_path, sizeof(std::size_t));
+	if (!bytes.has_value() || bytes->size() < sizeof(std::size_t)) {
+		return std::nullopt;
+	}
+	
+	// Leer la longitud
+	std::size_t len = *reinterpret_cast<const std::size_t*>(bytes->data());
+	
+	// Verificar que el tamaño es consistente
+	if (bytes->size() != sizeof(std::size_t) + len) {
+		return std::nullopt;
+	}
+	
+	// Reconstruir la string a partir de los bytes
+	if (len == 0) {
+		return std::string();
+	}
+	
+	return std::string(bytes->data() + sizeof(std::size_t), bytes->data() + bytes->size());
+}
 
 }  // namespace akasha

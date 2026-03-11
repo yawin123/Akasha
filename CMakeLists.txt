@@ -8,7 +8,8 @@ option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha a
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
 
-# Buscar dependencias de Conan
+# Buscar dependencias de Conan - añadir primero para que tenga prioridad
+list(PREPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 find_package(Boost REQUIRED)
 
 add_library(akasha STATIC
