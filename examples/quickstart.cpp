@@ -4,14 +4,14 @@
 int main() {
     akasha::Store store;
     
-    // Cargar un archivo (se crea si no existe)
+    // Load a file (created if it doesn't exist)
     auto status = store.load("config", "/tmp/myconfig.db", true);
     if (status != akasha::Status::ok) {
         std::cerr << "Error loading config: " << static_cast<int>(status) << '\n';
         return 1;
     }
     
-    // Escribir valores
+    // Write values
     status = store.set<int64_t>("config.timeout", 30);
     if (status != akasha::Status::ok) {
         std::cerr << "Error setting timeout\n";
@@ -30,7 +30,7 @@ int main() {
         return 1;
     }
     
-    // Leer valores
+    // Read values
     auto timeout = store.get<int64_t>("config.timeout");
     if (timeout.has_value()) {
         std::cout << "Timeout: " << timeout.value() << " seconds\n";
@@ -46,10 +46,17 @@ int main() {
         std::cout << "App name: " << name.value() << '\n';
     }
     
-    // Obtener o establecer default
+    // Get or set default
     auto max_retries = store.getorset<int64_t>("config.max_retries", 5);
     if (max_retries.has_value()) {
         std::cout << "Max retries: " << max_retries.value() << '\n';
+    }
+    
+    // Unload the dataset when done
+    std::cout << "\nUnloading dataset...\n";
+    status = store.unload("config");
+    if (status == akasha::Status::ok) {
+        std::cout << "✓ Dataset unloaded\n";
     }
     
     return 0;

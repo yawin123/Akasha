@@ -156,6 +156,17 @@ public:
 	);
 
 	/**
+	 * @brief Unloads a dataset from the Store.
+	 *
+	 * Closes the memory-mapped file and removes the dataset from the Store.
+	 * The data persists on disk, but is no longer accessible through this Store instance.
+	 * 
+	 * @param source_id Dataset identifier (matches the one used in load()).
+	 * @return Status of the unload operation.
+	 */
+	[[nodiscard]] Status unload(std::string_view source_id);
+
+	/**
 	 * @brief Establece o reemplaza un valor hoja tipado en una clave calificada por dataset.
 	 *
 	 * Ejemplo: set<int64_t>("user.core.timeout", 90)

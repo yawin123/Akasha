@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 0.8.0 LANGUAGES CXX)
+project(Akasha VERSION 0.9.0 LANGUAGES CXX)
 
-option(BUILD_EXAMPLE "Build example application" ON)
+option(BUILD_EXAMPLE "Build example application" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
 
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
@@ -41,16 +41,38 @@ if(AKASHA_DEP_TARGETS)
 endif()
 
 if(BUILD_EXAMPLE)
-    # Ejemplo principal (comprehensive)
-    add_executable(akasha_example examples/comprehensive.cpp)
-    target_link_libraries(akasha_example PRIVATE akasha::akasha)
+    # Teaching examples demonstrating API capabilities
     
-    # Ejemplos adicionales
+    # 1. Quick start: basic load, set, get, getorset, unload
     add_executable(akasha_quickstart examples/quickstart.cpp)
     target_link_libraries(akasha_quickstart PRIVATE akasha::akasha)
     
+    # 2. Error handling: Status enum validation
     add_executable(akasha_error_handling examples/error_handling.cpp)
     target_link_libraries(akasha_error_handling PRIVATE akasha::akasha)
+    
+    # 3. Multiple datasets: loading multiple sources in one Store
+    add_executable(akasha_multiple_datasets examples/multiple_datasets.cpp)
+    target_link_libraries(akasha_multiple_datasets PRIVATE akasha::akasha)
+    
+    # 4. Navigation and introspection: DatasetView, has(), keys()
+    add_executable(akasha_navigation examples/navigation.cpp)
+    target_link_libraries(akasha_navigation PRIVATE akasha::akasha)
+    
+    # 5. Cleanup and lifecycle: clear() and compact() demonstrations
+    add_executable(akasha_cleanup examples/cleanup.cpp)
+    target_link_libraries(akasha_cleanup PRIVATE akasha::akasha)
+    
+    # 6. Nested data structures: trivially copyable structs
+    add_executable(akasha_nested_data examples/nested_data.cpp)
+    target_link_libraries(akasha_nested_data PRIVATE akasha::akasha)
+    
+    # 7. Benchmarks: performance measurements
+    add_executable(akasha_benchmarks examples/benchmarks.cpp)
+    target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
+    
+    # Reset BUILD_EXAMPLE to OFF after processing so next build doesn't compile examples
+    set(BUILD_EXAMPLE OFF CACHE BOOL "Build example application" FORCE)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)

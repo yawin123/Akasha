@@ -378,6 +378,34 @@ Status Store::load(std::string_view source_id, std::string_view file_path, bool 
     }
 }
 
+Status Store::unload(std::string_view source_id) {
+    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+
+    auto source_it = std::find_if(sources_.begin(), sources_.end(), 
+        [source_id](const Source& source) {
+            return source.id == source_id;
+        });
+
+    if (source_it == sources_.end()) {
+        return last_status_ = Status::dataset_not_found;
+    }
+
+    // Acquire lock on the file being unloaded to ensure no operations in progress
+    if (source_it->file_lock) {
+        std::unique_lock<std::shared_mutex> file_guard(*source_it->file_lock);
+        
+        // Clear the dataset map reference
+        source_it->dataset_map = nullptr;
+        source_it->storage = nullptr;
+        source_it->file_lock = nullptr;
+    }
+
+    // Remove the source from the vector
+    sources_.erase(source_it);
+    
+    return last_status_ = Status::ok;
+}
+
 Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size) {
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.size() < 2) {

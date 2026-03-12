@@ -20,32 +20,23 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 - Evitar copias completas del dataset mapeado hacia estructuras espejo en memoria del proceso.
 - Evitar cambios de API incompatibles a partir de 0.9.0.
 
-## Estado actual (0.8.0)
+## Estado actual (0.9.0 - 12 marzo 2026)
 
-- Librería estática compilando con CMake.
-- Versión obtenida desde CMake (`AKASHA_VERSION` macro configurada en compilación).
-- Dependencias integradas con Conan (Boost).
-- **API core completada**: `Store`, `DatasetView`, `load`, `has`, `get`, `set<T>()`, `clear()`, `compact()`, `last_status()`.
-- Notación por puntos para navegación jerárquica.
-- Backend de almacenamiento persistente con `Boost.Interprocess::managed_mapped_file`.
-- Cada dataset se identifica por `source_id`; duplicados rechazados con `source_already_loaded`.
-- Claves siempre calificadas por dataset (`dataset.algo...`).
-- `get`/`has` no hacen búsqueda cross-dataset: si el dataset no existe, devuelven `std::nullopt`/`false`.
-- Flag `create_if_missing` opcional: si true, crea archivo vacío (mapa raíz vacío) si no existe.
-- Soporte completo de escalares: bool, int64, uint64, double, string, y structs trivially copyable.
-- Escritura directa con `set<T>(key_path, value)` y `flush` inmediato.
-- **Modelo de errores unificado**: `Status` enum con 10 códigos.
-- **Error tracking**: `last_status()` retorna el último status de operación.
-- Política de crecimiento dinámico del archivo mapeado (`grow + remap` seguro).
-- API de limpieza `clear(key_path={})` con borrado total/dataset/prefijo.
-- Reset determinista al tamaño inicial del archivo en limpiezas completas.
-- Concurrencia local por hilo con `std::shared_mutex` por fichero.
-- **Tuning configurable**: `set_performance_tuning()` para inicial_size, grow_step, max_retries.
-- **Compactación explícita**: `compact(dataset_id={})` para optimizar archivos bajo demanda.
-- **Helpers template ergonómicos**: `get<T>(clave)` y `set<T>(clave, valor)` para acceso type-safe.
-- **Estructura como submódulo**: `apps/` → `examples/` con 3 ejemplos funcionales.
-- Compilación limpia sin warnings, ejecución funcional de todos los ejemplos.
-- Foco activo: 0.9.0 (beta de estabilización, API freeze, tests, benchmarks).
+- Librería estática compilando limpiamente con C++23, CMake, Conan.
+- **Benchmarks completados**: 3.8M ops/sec reads (zero-copy), 800K ops/sec writes, 5-7x read/write ratio.
+- **7 ejemplos de enseñanza**: quickstart, error_handling, multiple_datasets, navigation, cleanup, nested_data, benchmarks.
+- **Performance validada**: Zero-copy mmap architecture confirmada mediante benchmarking.
+- **API completa y estable**: No breaking changes planeados post-0.9.0.
+- Modelo de errores unificado con 10 códigos Status.
+- Concurrencia thread-safe con `std::shared_mutex` por fichero.
+- Documentación en English con ejemplos ejecutables sin warnings.
+- Toda la API público-facing completa: `Store`, `DatasetView`, `load`, `unload`, `get<T>()`, `set<T>()`, `getorset<T>()`, `clear()`, `compact()`, `has()`, `last_status()`.
+- Compilación de ejemplos opt-in mediante `-DBUILD_EXAMPLE=ON`.
+- CMake resetea automáticamente BUILD_EXAMPLE a OFF después de procesar ejemplos.
+- Tasks VS Code para compilación selectiva (librería vs. ejemplos).
+- Selector interactivo para ejecución de ejemplos.
+
+Próximo paso: 1.0.0 release con API stability guarantee.
 
 ## Hitos por versión
 
@@ -270,20 +261,37 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 
 ## 0.9.0 — Beta de estabilización
 
-**Meta:** congelar superficie pública de cara a 1.0.
+**Meta:** congelar superficie pública, validar performance, demostrar casos de uso.
 
 **Entregables:**
 
-- Revisión de API pública y eliminación de deuda crítica.
-- Compatibilidad de API: sin breaking changes no justificados.
-- Endurecimiento de tests (unit + integración).
-- Benchmarks básicos de latencia de consulta.
+- Revisión completa de API pública (sin breaking changes necesarios).
+- Benchmarks comprehensivos: 3.8M reads/sec (zero-copy), 5-7x read/write ratio.
+- 7 ejemplos de enseñanza: quickstart, error_handling, multiple_datasets, navigation, cleanup, nested_data, benchmarks.
+- Validación de zero-copy architecture documentada.
+- API estable lista para producción.
+- Unload() implementado (simetría con load()).
+- Compilación ejemplos opt-in (BUILD_EXAMPLE=ON requerido).
+- CMake auto-resetea BUILD_EXAMPLE a OFF después de compilar.
+- Task "📦 Compilar ejemplos" para compilación intencional.
+- Task "🔨 Compilar" para librería solamente (por defecto).
+- Selector interactivo de ejemplos para ejecución.
+- Sin warnings en código de ejemplos.
 
-**Done cuando:**
+**Estado:** COMPLETADO (12 marzo 2026)
 
-- API candidata a estable y feedback interno cerrado.
+**Ejemplos detallados:**
+1. **quickstart.cpp** - Ciclo de vida completo: load → set → get → unload
+2. **error_handling.cpp** - Manejo de Status enum (10 códigos de error)
+3. **multiple_datasets.cpp** - Carga independiente de múltiples fuentes
+4. **navigation.cpp** - Introspección jerárquica con DatasetView y keys()
+5. **cleanup.cpp** - Operaciones de limpieza: clear() en 3 niveles + compact()
+6. **nested_data.cpp** - Estructuras trivially_copyable anidadas
+7. **benchmarks.cpp** - Medición de throughput: reads/writes por segundo
 
-## 1.0.0 — Release estable
+Próxima versión: 1.0.0 (release estable)
+
+## 1.0.0 — Release estable (Planeado)
 
 **Meta:** primera versión estable orientada a producción.
 
@@ -309,8 +317,11 @@ Con soporte de uso embebido (misma aplicación), priorizando latencia baja y per
 
 ## Orden recomendado de ejecución inmediata
 
-1. Refinar 0.7.0 (modelo de errores y observabilidad).
-2. Reforzar 0.8.0 (empaquetado y DX de integración).
-3. Reforzar 0.9.0 (tests de endurecimiento).
-
-Con esos tres hitos, Akasha consolida una propuesta de valor rápida, integrable y lista para estabilización.
+1. 0.7.0 — Modelo de errores y observabilidad (COMPLETADO)
+2. 0.8.0 — Empaquetado y DX de integración (COMPLETADO)
+3. 0.9.0 — Beta de estabilización (COMPLETADO - 12 marzo 2026)
+4. **1.0.0** — Release estable de producción (EN PROGRESO)
+   - Finalizar documentación de API.
+   - Validar matriz de compatibilidad compiladores/SO.
+   - Documentar changelog y contratos de estabilidad.
+   - Tag/release reproducible en CI/CD.

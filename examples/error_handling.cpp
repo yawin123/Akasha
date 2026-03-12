@@ -39,33 +39,33 @@ void print_status(akasha::Status status) {
 int main() {
     akasha::Store store;
     
-    // Intentar cargar un archivo inexistente sin create_if_missing
+    // Try to load a non-existent file without create_if_missing
     std::cout << "Loading non-existent file without create flag:\n";
     auto status = store.load("config", "/tmp/nonexistent.db", false);
     print_status(status);
     std::cout << "Last status: ";
     print_status(store.last_status());
     
-    // Cargar correctamente
+    // Load correctly
     std::cout << "\nLoading (with create flag):\n";
     status = store.load("config", "/tmp/error_test.db", true);
     print_status(status);
     
-    // Clave inválida (sin dataset)
+    // Invalid key (no dataset)
     std::cout << "\nSetting with invalid key path:\n";
     status = store.set<int64_t>("invalid_key", 42);
     print_status(status);
     std::cout << "Last status: ";
     print_status(store.last_status());
     
-    // Operación exitosa
+    // Successful operation
     std::cout << "\nSetting valid key:\n";
     status = store.set<int64_t>("config.timeout", 30);
     print_status(status);
     std::cout << "Last status: ";
     print_status(store.last_status());
     
-    // Intentar cargar mismo dataset dos veces
+    // Try to load same dataset twice
     std::cout << "\nLoading same dataset twice:\n";
     status = store.load("config", "/tmp/another.db", true);
     print_status(status);
