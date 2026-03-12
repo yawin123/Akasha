@@ -1,6 +1,6 @@
-# Akasha — Zero-Copy C++23 Configuration Storage
+# Akasha — Zero-Copy C++23 Storage
 
-Akasha is a minimalist C++23 library for storing and retrieving configuration in memory-mapped files (mmap), prioritizing **low latency**, **direct persistence**, and **type safety**.
+Akasha is a minimalist C++23 library for storing and retrieving data in memory-mapped files (mmap), prioritizing **low latency**, **direct persistence**, and **type safety**.
 
 Designed to be embedded in projects as a Git submodule — no complex build dependencies, no global installation, no binary artifacts.
 
@@ -17,18 +17,22 @@ Designed to be embedded in projects as a Git submodule — no complex build depe
 
 **Akasha** comes from Sanskrit **ākāśa** (आकाश), meaning "ether," "space," or "sky." In Indian philosophy, *ākāśa* represents the subtle, all-pervading medium that enables the existence and transmission of all manifestations — a universal space containing all things.
 
-The metaphor fits: Akasha is a unified space where configuration data from multiple sources aggregates, organizes, and resolves through a single interface. Just as *ākāśa* is the fundamental medium in philosophy, Akasha is the fundamental storage layer for your application's configuration.
+The metaphor fits: Akasha is a unified space where data from multiple sources aggregates, organizes, and resolves through a single interface. Just as *ākāśa* is the fundamental medium in philosophy, Akasha is the fundamental storage layer for your application's data.
 
 ## Requirements
 
 - **Compiler**: C++23 (GCC 13+, Clang 16+, MSVC 194+)
 - **Dependencies**: Boost.Interprocess (managed automatically by Conan)
-- **OS**: Linux, macOS, Windows
 
 ## Installation as Submodule
 
 ```bash
 git submodule add https://git.yawin.es/personal/akasha.git vendor/akasha
+```
+Or if you prefer, from GitHub
+
+```bash
+git submodule add https://github.com/yawin123/Akasha.git vendor/akasha
 ```
 
 ## Building
@@ -57,7 +61,7 @@ target_link_libraries(myapp akasha::akasha)
 ## Quick Start
 
 ```cpp
-#include "akasha.hpp"
+#include <akasha.hpp>
 
 akasha::Store store;
 
@@ -80,6 +84,11 @@ if (timeout.has_value()) {
 
 // Get or set default
 auto max_retries = store.getorset<int64_t>("app_config.max_retries", 5);
+
+// Unload dataset
+if (store.unload("config") != akasha::Status::ok) {
+    std::cerr << "Error: " << static_cast<int>(store.last_status());
+}
 ```
 
 See more examples in [examples/](examples/).
@@ -97,6 +106,10 @@ cmake --build .
 ## API Reference
 
 Full documentation in [include/akasha.hpp](include/akasha.hpp).
+
+### Documentation Files
+
+- **[REFERENCE.md](REFERENCE.md)** — Comprehensive API guide with examples and use cases
 
 ### Store Methods
 
@@ -127,29 +140,6 @@ All examples compile with `cmake --build build` and run from `./build/akasha_*`.
 ### 1. Quickstart (`quickstart.cpp`)
 **What it teaches:** Basic API usage (load, set, get, getorset, unload)
 
-```cpp
-akasha::Store store;
-
-// Load a dataset
-store.load("config", "/tmp/app.db", true);
-
-// Write typed values
-store.set<int64_t>("config.timeout", 30);
-store.set<std::string>("config.name", "MyApp");
-
-// Read values
-auto timeout = store.get<int64_t>("config.timeout");
-if (timeout.has_value()) {
-    std::cout << "Timeout: " << timeout.value() << " seconds\n";
-}
-
-// Get or set default
-auto max_retries = store.getorset<int64_t>("config.max_retries", 5);
-
-// Unload when done
-store.unload("config");
-```
-
 **Questions answered:**
 - How do I load a dataset?
 - How do I write and read values?
@@ -159,22 +149,6 @@ store.unload("config");
 ### 2. Error Handling (`error_handling.cpp`)
 **What it teaches:** Status enum validation and error handling patterns
 
-```cpp
-auto status = store.load("data", "/tmp/data.db", false);
-if (status != akasha::Status::ok) {
-    std::cerr << "Error: " << (int)status << '\n';
-}
-
-// Check last error
-auto last = store.last_status();
-switch(last) {
-    case akasha::Status::ok: break;
-    case akasha::Status::file_not_found: /* ... */
-    case akasha::Status::source_already_loaded: /* ... */
-    // ... all 10 Status codes
-}
-```
-
 **Questions answered:**
 - How do I detect errors?
 - What error codes exist?
@@ -182,19 +156,6 @@ switch(last) {
 
 ### 3. Multiple Datasets (`multiple_datasets.cpp`)
 **What it teaches:** Loading multiple independent data sources in one Store
-
-```cpp
-store.load("app", "/tmp/app.db", true);
-store.load("user", "/tmp/user.db", true);
-// Attempt to reload "app" (fails with source_already_loaded)
-
-store.set<int64_t>("app.server.port", 8080);
-store.set<int64_t>("user.profile.id", 42);
-
-// Each dataset is independent
-auto app_port = store.get<int64_t>("app.server.port");
-auto user_id = store.get<int64_t>("user.profile.id");
-```
 
 **Questions answered:**
 - Can I load multiple datasets?
@@ -204,24 +165,6 @@ auto user_id = store.get<int64_t>("user.profile.id");
 ### 4. Navigation & Introspection (`navigation.cpp`)
 **What it teaches:** Checking existence, listing contents, hierarchical queries
 
-```cpp
-store.set<std::string>("settings.server.host", "localhost");
-store.set<int64_t>("settings.server.port", 8080);
-
-// Check if a key exists
-if (store.has("settings.server.host")) {
-    auto host = store.get<std::string>("settings.server.host");
-}
-
-// Get a hierarchical view and list its contents
-auto server_view = store.get<akasha::Store::DatasetView>("settings.server");
-if (server_view) {
-    for (const auto& key : server_view->keys()) {
-        std::cout << "  - " << key << "\n";  // Outputs: host, port
-    }
-}
-```
-
 **Questions answered:**
 - Can I check if a key exists?
 - Can I list what's in a branch?
@@ -229,24 +172,6 @@ if (server_view) {
 
 ### 5. Cleanup & Lifecycle (`cleanup.cpp`)
 **What it teaches:** Deletion and compaction operations
-
-```cpp
-store.set<int64_t>("data.counter.hits", 100);
-store.set<std::string>("data.cache.key1", "value1");
-
-// Delete a specific branch
-store.clear("data.cache");  // Removes all data.cache.*
-
-// Delete entire dataset
-store.clear("data");        // Removes all data.*
-
-// Delete everything
-store.clear();              // Removes all data from all datasets
-
-// Reclaim space after deletions
-store.compact("data");      // Compacts single dataset
-store.compact();            // Compacts all datasets
-```
 
 **Questions answered:**
 - How do I delete data?
@@ -256,31 +181,6 @@ store.compact();            // Compacts all datasets
 
 ### 6. Nested Structures (`nested_data.cpp`)
 **What it teaches:** Storing and retrieving complex trivially-copyable structs
-
-```cpp
-struct Location {
-    double latitude;
-    double longitude;
-};
-
-struct User {
-    int64_t id;
-    int32_t age;
-    char name[64];
-    Location home;
-};
-
-struct UserProfile {
-    User user;
-    int64_t signup_timestamp;
-    int32_t login_count;
-};
-
-UserProfile profile{{1001, 30, "Alice", {41.3851, 2.1734}}, 1577836800, 42};
-store.set<UserProfile>("profiles.alice.data", profile);
-
-auto retrieved = store.get<UserProfile>("profiles.alice.data");
-```
 
 **Questions answered:**
 - Can I store nested structures?
@@ -297,6 +197,15 @@ Runs comprehensive tests for load, read, write operations across scalars, string
 - Is zero-copy really faster?
 - How does performance scale?
 
+### 8. DatasetView Navigation (`datasetview.cpp`)
+**What it teaches:** Advanced hierarchical navigation, introspection, and subtree copying
+
+**Questions answered:**
+- How do I navigate subtrees?
+- Can I check if a node has children or a direct value?
+- How do I copy entire subtree structures?
+- Can I use get-or-set with complex subtrees?
+
 ---
 
 ## Performance Benchmarks
@@ -307,11 +216,11 @@ Results measured on Intel i7-13700K, Ubuntu 22.04 LTS. Run with `./build/akasha_
 |-----------|-----------|-------|
 | Load empty dataset | 13,717 ops/sec | File creation overhead |
 | Write scalar (int64) | 848K / 803K ops/sec | 1K and 10K keys |
-| **Read scalar (int64)** | **3.8M / 3.1M ops/sec** | Zero-copy performance |
+| Read scalar (int64) | 3.8M / 3.1M ops/sec | Zero-copy performance |
 | Write string | 539K / 546K ops/sec | Serialized as [length][chars] |
-| **Read string** | **3.6M / 2.9M ops/sec** | mmap zero-copy reads |
+| Read string | 3.6M / 2.9M ops/sec | mmap zero-copy reads |
 | Write struct | 601K / 607K ops/sec | trivially_copyable types |
-| **Read struct** | **3.8M / 3.0M ops/sec** | Consistent with scalar |
+| Read struct | 3.8M / 3.0M ops/sec | Consistent with scalar |
 | Compact (50% deleted) | 7.3K / 4.3K ops/sec | 5K and 10K keys |
 
 **Key insight:** Reads are **5-7x faster** than writes — validates zero-copy mmap architecture.

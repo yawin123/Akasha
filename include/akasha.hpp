@@ -17,41 +17,42 @@
 namespace akasha {
 
 /**
- * @brief Versión semántica de la librería.
- * @return Vista inmutable con la versión actual (desde compilación).
+ * @brief Semantic version of the library.
+ * @return Immutable view with the current version (from compilation).
  */
 [[nodiscard]] inline std::string_view version() noexcept {
 #ifdef AKASHA_VERSION
 	return AKASHA_VERSION;
 #else
-	return "0.0.0-dev";  // fallback si no se compila con CMake
+	return "0.0.0-dev";  // fallback if not compiled with CMake
 #endif
 }
 
 /**
- * @brief Ruta jerárquica en notación por puntos.
+ * @brief Hierarchical path in dot notation.
  *
- * Reglas de formato para claves cargables:
- * - Deben contener al menos 2 segmentos: "dataset.algo".
- * - El primer segmento identifica el dataset.
- * - El resto identifica la clave dentro del dataset.
+ * Format rules for loadable keys:
+ * - Minimum 1 segment: "dataset" (root value of dataset) or "dataset.something" (nested value).
+ * - The first segment identifies the dataset.
+ * - The rest identifies the key within the dataset.
+ * - If there is only 1 segment, it is treated as the root value of the entire dataset.
  *
- * Ejemplos válidos: "core.timeout", "core.settings.retries".
+ * Valid examples: "config" (root), "core.timeout", "core.settings.retries".
  */
 using KeyPath = std::string;
 
-/** @brief Resultado de cualquier operación (carga, escritura, etc). */
+/** @brief Result of any operation (load, write, etc). */
 enum class Status {
 	ok,
-	invalid_key_path,      // Clave no tiene al menos 2 segmentos (dataset.clave)
-	key_conflict,          // Conflicto en estructura jerárquica
-	file_read_error,       // Error al leer archivo mapeado
-	file_write_error,      // Error al escribir en archivo
-	file_not_found,        // Archivo no existe y create_if_missing=false
-	file_full,             // Archivo lleno después de reintentos de crecimiento
-	parse_error,           // Error al parsear datos internos
-	dataset_not_found,     // Dataset (primer segmento) no existe
-	source_already_loaded, // Dataset ya está cargado
+	invalid_key_path,      // Empty key or invalid format
+	key_conflict,          // Conflict in hierarchical structure
+	file_read_error,       // Error reading memory-mapped file
+	file_write_error,      // Error writing to file
+	file_not_found,        // File does not exist and create_if_missing=false
+	file_full,             // File full after growth retry attempts
+	parse_error,           // Error parsing internal data
+	dataset_not_found,     // Dataset (first segment) does not exist
+	source_already_loaded, // Dataset already loaded
 };
 
 struct PerformanceTuning {
@@ -61,11 +62,11 @@ struct PerformanceTuning {
 };
 
 /**
- * @brief Almacén jerárquico de configuración.
+	 * @brief Hierarchical configuration store.
  *
- * Store carga rutas completas (incluyendo dataset) y permite:
- * - Consultar si existe una ruta con has.
- * - Obtener un valor hoja o un subconjunto navegable con get.
+ * Store loads complete paths (including dataset) and allows:
+ * - Query if a path exists with has.
+ * - Get a leaf value or a navigable subset with get.
  */
 class Store {
 private:
@@ -74,44 +75,48 @@ private:
 
 public:
 	/**
-	 * @brief Vista de solo lectura sobre un nodo intermedio del árbol.
+	 * @brief Read-only view of an intermediate node in the tree.
 	 *
-	 * Permite continuar navegando de forma relativa mediante get/has.
-	 * Ejemplo: si get("core.settings") devuelve DatasetView, luego
-	 * se puede consultar get("enabled") sobre esa vista.
+	 * Allows continuing navigation relatively through get/has.
+	 * Example: if get("core.settings") returns DatasetView, then
+	 * you can query get("enabled") on that view.
 	 */
 	class DatasetView {
 	public:
 		/**
-		 * @brief Indica si existe la ruta relativa dentro de esta vista.
-		 * @param key_path Ruta relativa a la vista actual.
+		 * @brief Indicates if the relative path exists within this view.
+		 * @param key_path Relative path to the current view.
 		 */
 		[[nodiscard]] bool has(std::string_view key_path) const;
 
 		/**
-		 * @brief Obtiene un valor tipado relativo a esta vista.
-		 * @param key_path Ruta relativa a la vista actual.
-		 * @return std::optional<T> con el valor si existe, std::nullopt en caso contrario.
-		 * @note El usuario es responsable del tipo T. Si no coincide con los datos, resultado indefinido.
+		 * @brief Gets a typed value relative to this view.
+		 * @param key_path Relative path to the current view.
+		 * @return std::optional<T> with the value if it exists, std::nullopt otherwise.
+		 * @note The user is responsible for type T. If it does not match the data, behavior is undefined.
 		 */
 		template<typename T = DatasetView>
-		[[nodiscard]] std::optional<T> get(std::string_view key_path) const {
+		[[nodiscard]] std::optional<T> get(std::string_view key_path = "") const {
 			if (source_ == nullptr) {
 				return std::nullopt;
 			}
 
-			// Construir la clave completa
-			std::string full_key = prefix_;
-			if (!prefix_.empty() && !key_path.empty()) {
+			// Build complete key, including dataset as first segment
+			std::string full_key = source_->id;
+			if (!prefix_.empty()) {
 				full_key += '.';
+				full_key += prefix_;
 			}
-			full_key.append(key_path);
+			if (!key_path.empty()) {
+				full_key += '.';
+				full_key += key_path;
+			}
 
-			// Si T es DatasetView, retornar una vista
+			// If T is DatasetView, return a view
 			if constexpr (std::is_same_v<T, DatasetView>) {
 				return DatasetView(source_, full_key);
 			} else {
-				// Para otros tipos T, acceder al Store backend
+			// For other types T, access the Store backend
 				if (source_->store == nullptr) {
 					return std::nullopt;
 				}
@@ -120,8 +125,19 @@ public:
 		}
 
 		/**
-		 * @brief Obtiene la lista de claves directas disponibles en esta vista.
-		 * @return Vector con las claves inmediatas (sin incluir subclaves).
+		 * @brief Indicates if this node has a direct value (is a leaf).
+		 * @return true if a value exists in this node, false otherwise.
+		 */
+		[[nodiscard]] bool has_value() const;
+
+		/**
+		 * @brief Indicates if this node has descendant keys.
+		 * @return true if there are keys under this node, false otherwise.
+		 */
+		[[nodiscard]] bool has_keys() const;
+
+		/**
+		 * @return Vector with immediate keys (excluding subkeys).
 		 */
 		[[nodiscard]] std::vector<std::string> keys() const;
 
@@ -136,18 +152,18 @@ public:
 	};
 
 	/**
-	 * @brief Carga configuración desde un archivo de memoria mapeada.
+	 * @brief Load configuration from a memory-mapped file.
 	 *
-	 * Usa Boost.Interprocess managed_mapped_file para almacenar directamente
-	 * un map<string, value> en el archivo. Esto permite lecturas zero-copy
-	 * y escrituras directas sin reserialización.
+	 * Uses Boost.Interprocess managed_mapped_file to store directly
+	 * a map<string, value> in the file. This allows zero-copy reads
+	 * and direct writes without reserialization.
 	 *
-	 * - Si la fuente ya existe (mismo source_id), devuelve error `source_already_loaded`.
+	 * - If the source already exists (same source_id), returns `source_already_loaded` error.
 	 *
-	 * @param source_id Identificador único de la fuente (nombre del dataset).
-	 * @param file_path Ruta del archivo de memoria mapeada.
-	 * @param create_if_missing Si es true y el archivo no existe, crea uno vacío.
-	 * @return Estado de la operación de carga.
+	 * @param source_id Unique dataset identifier (dataset name).
+	 * @param file_path Path to the memory-mapped file.
+	 * @param create_if_missing If true and file does not exist, creates empty file.
+	 * @return Status of the load operation.
 	 */
 	[[nodiscard]] Status load(
 		std::string_view source_id,
@@ -167,116 +183,121 @@ public:
 	[[nodiscard]] Status unload(std::string_view source_id);
 
 	/**
-	 * @brief Establece o reemplaza un valor hoja tipado en una clave calificada por dataset.
+	 * @brief Sets or replaces a value at a dataset-qualified key.
 	 *
-	 * Ejemplo: set<int64_t>("user.core.timeout", 90)
-	 * La escritura se realiza directamente en el managed_mapped_file como bytes crudos.
-	 * El usuario es 100% responsable de que el tipo T sea consistente al leer.
+	 * Specialization for trivially copyable types:
+	 * Example: set<int64_t>("user.core.timeout", 90)
+	 * 
+	 * Specialization for DatasetView:
+	 * Copy the entire subtree to the new location, deleting destination if it exists.
+	 * Example: set<DatasetView>("backup.servers", view_of_servers)
 	 */
 	template<typename T>
 	[[nodiscard]] Status set(std::string_view key_path, const T& value) {
-		static_assert(std::is_trivially_copyable_v<T>, 
-			"Type T must be trivially copyable for akasha::Store::set<T>");
-		
-		const char* bytes = reinterpret_cast<const char*>(&value);
-		return set_bytes_impl(key_path, bytes, sizeof(T));
+		if constexpr (std::is_same_v<T, DatasetView>) {
+			// Special override for DatasetView: copy subtree
+			return set_datasetview_impl(key_path, value);
+		} else {
+			static_assert(std::is_trivially_copyable_v<T>, 
+				"Type T must be trivially copyable for akasha::Store::set<T>");
+			
+			const char* bytes = reinterpret_cast<const char*>(&value);
+			return set_bytes_impl(key_path, bytes, sizeof(T));
+		}
 	}
 
 	/**
-	 * @brief Ajusta parámetros de rendimiento local para nuevos crecimientos/creaciones.
+	 * @brief Adjust local performance parameters for new grow/creations.
 	 */
 	void set_performance_tuning(const PerformanceTuning& tuning) noexcept;
 
 	/**
-	 * @brief Obtiene la configuración de rendimiento actual.
+	 * @brief Gets the current performance configuration.
 	 */
 	[[nodiscard]] PerformanceTuning performance_tuning() const noexcept;
 
 	/**
-	 * @brief Elimina datos persistidos.
+	 * @brief Deletes persisted data.
 	 *
-	 * - Si key_path está vacío, elimina todos los datos de todos los datasets cargados.
-	 * - Si key_path incluye solo dataset (p.ej. "user"), elimina todo ese dataset.
-	 * - Si key_path incluye subclave (p.ej. "user.core"), elimina esa clave y todo su subárbol.
+	 * - If key_path is empty, deletes all data from all loaded datasets.
+	 * - If key_path includes only dataset (e.g. "user"), deletes all data in that dataset.
+	 * - If key_path includes subkey (e.g. "user.core"), deletes that key and its entire subtree.
 	 */
 	[[nodiscard]] Status clear(std::string_view key_path = {});
 
 	/**
-	 * @brief Compacta el archivo mapeado para un dataset o para todos.
+	 * @brief Compacts the mapped file for a dataset or all of them.
 	 *
-	 * - Si dataset_id está vacío, compacta todos los archivos de datasets cargados.
-	 * - Si dataset_id existe, compacta solo su archivo asociado.
+	 * - If dataset_id is empty, compacts all files in loaded datasets.
+	 * - If dataset_id exists, compacts only its associated file.
 	 */
 	[[nodiscard]] Status compact(std::string_view dataset_id = {});
 
 	/**
-	 * @brief Indica si existe una ruta completa.
-	 * @param key_path Ruta completa (incluye dataset).
+	 * @brief Indicates if a complete path exists.
+	 * @param key_path Complete path (includes dataset).
 	 */
 	[[nodiscard]] bool has(std::string_view key_path) const;
 
 	/**
-	 * @brief Obtiene el último status retornado por cualquier operación.
-	 * @return Status del último error, o Status::ok si última operación fue exitosa.
+	 * @brief Gets the last status returned by any operation.
+	 * @return Status of the last error, or Status::ok if last operation was successful.
 	 */
 	[[nodiscard]] Status last_status() const noexcept;
 
 	/**
-	 * @brief Consulta una ruta completa tipada o retorna DatasetView.
-	 * @param key_path Ruta completa (incluye dataset).
-	 * @return std::optional<T> con el valor si existe, std::nullopt en caso contrario.
-	 * @note El usuario es responsable del tipo T. Si no coincide con los datos, resultado indefinido.
+	 * @brief Queries a complete typed path or returns DatasetView.
+	 * @param key_path Complete path (includes dataset).
+	 * @return std::optional<T> with the value if it exists, std::nullopt otherwise.
+	 * @note The user is responsible for the type T. If it does not match the data, behavior is undefined.
 	 */
 	template<typename T = DatasetView>
 	[[nodiscard]] std::optional<T> get(std::string_view key_path) const {
-		// Si T es DatasetView, retornar una vista
+		// If T is DatasetView, return a view
 		if constexpr (std::is_same_v<T, DatasetView>) {
 			return get_dataset_view(key_path);
 		} else {
 			static_assert(std::is_trivially_copyable_v<T>, 
 				"Type T must be trivially copyable for akasha::Store::get<T>");
 			
-			// Leer bytes genéricos y interpretar como T
+			// Read generic bytes and interpret as T
 			auto bytes = get_bytes_impl(key_path, sizeof(T));
 			if (!bytes.has_value()) {
 				return std::nullopt;
 			}
 			
-			// Reinterpret bytes como T
+			// Reinterpret bytes as T
 			return *reinterpret_cast<const T*>(bytes->data());
 		}
 	}
 
 	/**
-	 * @brief Obtiene un valor tipado o lo establece con un default si no existe.
+	 * @brief Gets a typed value or sets it with a default if it doesn't exist.
 	 * 
-	 * Si la clave existe, retorna su valor. Si no existe, establece el valor por defecto,
-	 * lo persiste y retorna ese mismo valor.
+	 * If the key exists, returns its value. If not, sets the default value,
+	 * persists it and returns that same value.
 	 * 
-	 * Útil para inicialización lazy de valores de configuración.
+	 * Useful for lazy initialization of configuration values.
 	 * 
-	 * @param key_path Ruta completa (incluye dataset).
-	 * @param default_value Valor por defecto a establecer si no existe.
-	 * @return std::optional<T> con el valor encontrado o el default establecido.
+	 * @param key_path Complete path (includes dataset).
+	 * @param default_value Default value to set if it doesn't exist.
+	 * @return std::optional<T> with the found or default value set.
 	 */
 	template<typename T>
 	[[nodiscard]] std::optional<T> getorset(std::string_view key_path, const T& default_value) {
-		static_assert(std::is_trivially_copyable_v<T>, 
-			"Type T must be trivially copyable for akasha::Store::getorset<T>");
-		
-		// Intentar obtener el valor existente
+		// Try to get the existing value
 		auto existing = get<T>(key_path);
 		if (existing.has_value()) {
 			return existing;
 		}
 		
-		// Si no existe, escribir el default
+		// If not exists, write the default
 		const auto set_status = set<T>(key_path, default_value);
 		if (set_status == Status::ok) {
 			return default_value;
 		}
 		
-		// Error al escribir
+		// Error writing
 		return std::nullopt;
 	}
 
@@ -295,6 +316,7 @@ private:
 	[[nodiscard]] const Source* find_source(std::string_view source_id) const;
 	[[nodiscard]] std::optional<DatasetView> get_dataset_view(std::string_view key_path) const;
 	[[nodiscard]] Status set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size);
+	[[nodiscard]] Status set_datasetview_impl(std::string_view key_path, const DatasetView& view);
 	[[nodiscard]] std::optional<std::vector<char>> get_bytes_impl(std::string_view key_path, std::size_t expected_size) const;
 	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
 	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
@@ -314,8 +336,8 @@ private:
 // Template specializations for std::string outside the class scope
 
 /**
- * @brief Especialización para Store::set() con std::string.
- * Serializa la string como [size_t length][char data].
+ * @brief Specialization for Store::set() with std::string.
+ * Serializes the string as [size_t length][char data].
  */
 template<>
 inline akasha::Status Store::set<std::string>(std::string_view key_path, const std::string& value) {
@@ -330,26 +352,26 @@ inline akasha::Status Store::set<std::string>(std::string_view key_path, const s
 }
 
 /**
- * @brief Especialización para Store::get() con std::string.
- * Deserializa la string desde [size_t length][char data].
+ * @brief Specialization for Store::get() with std::string.
+ * Deserializes the string from [size_t length][char data].
  */
 template<>
 inline std::optional<std::string> Store::get<std::string>(std::string_view key_path) const {
-	// Necesitamos al menos sizeof(size_t) para la longitud
+	// We need at least sizeof(size_t) for the length
 	auto bytes = get_bytes_impl(key_path, sizeof(std::size_t));
 	if (!bytes.has_value() || bytes->size() < sizeof(std::size_t)) {
 		return std::nullopt;
 	}
 	
-	// Leer la longitud
+	// Read the length
 	std::size_t len = *reinterpret_cast<const std::size_t*>(bytes->data());
 	
-	// Verificar que el tamaño es consistente
+	// Verify that the size is consistent
 	if (bytes->size() != sizeof(std::size_t) + len) {
 		return std::nullopt;
 	}
 	
-	// Reconstruir la string a partir de los bytes
+	// Rebuild the string from the bytes
 	if (len == 0) {
 		return std::string();
 	}
@@ -358,24 +380,24 @@ inline std::optional<std::string> Store::get<std::string>(std::string_view key_p
 }
 
 /**
- * @brief Especialización para Store::getorset() con std::string.
- * Obtiene la string o establece el default si no existe.
+ * @brief Specialization for Store::getorset() with std::string.
+ * Gets the string or sets the default if it doesn't exist.
  */
 template<>
 inline std::optional<std::string> Store::getorset<std::string>(std::string_view key_path, const std::string& default_value) {
-	// Intentar obtener el valor existente
+	// Try to get the existing value
 	auto existing = get<std::string>(key_path);
 	if (existing.has_value()) {
 		return existing;
 	}
 	
-	// Si no existe, escribir el default
+	// If not exists, write the default
 	const auto set_status = set<std::string>(key_path, default_value);
 	if (set_status == Status::ok) {
 		return default_value;
 	}
 	
-	// Error al escribir
+	// Error writing
 	return std::nullopt;
 }
 

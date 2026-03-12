@@ -8,7 +8,7 @@ option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha a
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
 
-# Buscar dependencias de Conan - añadir primero para que tenga prioridad
+# Find Conan dependencies - add first to have priority
 list(PREPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 find_package(Boost REQUIRED)
 
@@ -71,13 +71,17 @@ if(BUILD_EXAMPLE)
     add_executable(akasha_benchmarks examples/benchmarks.cpp)
     target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
     
+    # 8. DatasetView: subtree navigation, introspection, and copying
+    add_executable(akasha_datasetview examples/datasetview.cpp)
+    target_link_libraries(akasha_datasetview PRIVATE akasha::akasha)
+    
     # Reset BUILD_EXAMPLE to OFF after processing so next build doesn't compile examples
     set(BUILD_EXAMPLE OFF CACHE BOOL "Build example application" FORCE)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)
     if(NOT CMAKE_AR)
-        message(FATAL_ERROR "AKASHA_BUILD_SINGLE_ARCHIVE requiere una herramienta 'ar' disponible en CMAKE_AR")
+        message(FATAL_ERROR "AKASHA_BUILD_SINGLE_ARCHIVE requires an 'ar' tool available in CMAKE_AR")
     endif()
 
     set(_akasha_bundle_inputs "$<TARGET_FILE:akasha>")

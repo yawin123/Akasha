@@ -310,7 +310,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, bool 
 
     std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
 
-    // Validar que no existe
+    // Verify source does not already exist
     if (find_source(source_id) != nullptr) {
         return last_status_ = Status::source_already_loaded;
     }
@@ -324,7 +324,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, bool 
     try {
         auto storage = std::make_shared<MappedFileStorage>(path, initial_size);
 
-        // Intentar encontrar o crear el map del dataset en el managed_mapped_file
+        // Try to find or create the dataset map in the managed_mapped_file
         auto* dataset_map = storage->file.find_or_construct<InterprocessDatasetMap>(
             kDatasetMapName
         )(storage->file.get_segment_manager());
@@ -333,7 +333,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, bool 
             return last_status_ = Status::file_read_error;
         }
 
-        // Crear la Source y almacenarla
+        // Create and store the Source
         Source new_source;
         new_source.id = std::string{source_id};
         new_source.file_path = path;
@@ -347,7 +347,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, bool 
 
     } catch (const bip::interprocess_exception& e) {
         if (create_if_missing) {
-            // Intentar crear archivo nuevo
+            // Try to create new file
             try {
                 bip::file_mapping::remove(path.c_str());
                 auto storage = std::make_shared<MappedFileStorage>(path, initial_size);
@@ -408,7 +408,7 @@ Status Store::unload(std::string_view source_id) {
 
 Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size) {
     std::vector<std::string_view> segments;
-    if (!split_key_path(key_path, segments) || segments.size() < 2) {
+    if (!split_key_path(key_path, segments) || segments.empty()) {
         return last_status_ = Status::invalid_key_path;
     }
 
@@ -430,13 +430,18 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
         return last_status_ = Status::file_write_error;
     }
 
-    // Construir la clave sin el prefijo del dataset
+    // Build the key without the dataset prefix
+    // If there is only 1 segment (dataset root), use "__root__"
     std::string key;
-    for (std::size_t i = 1; i < segments.size(); ++i) {
-        if (i > 1) {
-            key += '.';
+    if (segments.size() == 1) {
+        key = "__root__";
+    } else {
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            if (i > 1) {
+                key += '.';
+            }
+            key += segments[i];
         }
-        key += segments[i];
     }
 
     std::size_t grow_step = initial_grow_step_.load(std::memory_order_relaxed);
@@ -448,13 +453,13 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
             auto* map = as_dataset_map(source->dataset_map);
             auto allocator = segment_mgr->get_allocator<char>();
 
-            // Crear InterprocessString para la clave
+            // Create InterprocessString for the key
             InterprocessString ipc_key(key.c_str(), allocator);
 
-            // Crear InterprocessValue (InterprocessString) con los bytes
+            // Create InterprocessValue (InterprocessString) with the bytes
             InterprocessValue ipc_value(static_cast<const char*>(bytes), size, allocator);
 
-            // Insertar o reemplazar en el map (escritura directa en mmap)
+            // Insert or replace in the map (direct mmap write)
             auto it = map->find(ipc_key);
             if (it == map->end()) {
                 map->emplace(ipc_key, ipc_value);
@@ -521,117 +526,34 @@ std::optional<std::vector<char>> Store::get_bytes_impl(std::string_view key_path
         return std::nullopt;
     }
 
-    // Construir la clave
+    // Build the key
+    // If there is only 1 segment (dataset root), use "__root__"
     std::string key;
-    for (std::size_t i = 1; i < segments.size(); ++i) {
-        if (i > 1) {
-            key += '.';
+    if (segments.size() == 1) {
+        key = "__root__";
+    } else {
+        for (std::size_t i = 1; i < segments.size(); ++i) {
+            if (i > 1) {
+                key += '.';
+            }
+            key += segments[i];
         }
-        key += segments[i];
     }
 
     // Buscar clave exacta
     auto* map = as_dataset_map(source.dataset_map);
     auto it = map->find(InterprocessString(key.c_str(), source.storage->file.get_segment_manager()->get_allocator<char>()));
     if (it != map->end()) {
-        // it->second es el InterprocessValue (InterprocessString)
+        // it->second is the InterprocessValue (InterprocessString)
         const auto& data_bytes = it->second;
         
-        // Retornar los bytes (sin verificar tamaño - responsabilidad del usuario)
+        // Return the bytes (size verification is the user's responsibility)
         std::vector<char> result(data_bytes.c_str(), data_bytes.c_str() + data_bytes.size());
         return result;
     }
 
     return std::nullopt;
 }
-
-/*
-Status Store::set_internal(std::string_view key_path, const InternalValue& value) {
-    std::vector<std::string_view> segments;
-    if (!split_key_path(key_path, segments) || segments.size() < 2) {
-        return last_status_ = Status::invalid_key_path;
-    }
-
-    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
-
-    const std::string_view dataset_id = segments.front();
-    Source* source = find_source(dataset_id);
-    if (source == nullptr) {
-        return last_status_ = Status::dataset_not_found;
-    }
-
-    if (!source->file_lock) {
-        return last_status_ = Status::file_write_error;
-    }
-
-    std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
-
-    if (!source->dataset_map || !source->storage) {
-        return last_status_ = Status::file_write_error;
-    }
-
-    // Construir la clave sin el prefijo del dataset
-    std::string key;
-    for (std::size_t i = 1; i < segments.size(); ++i) {
-        if (i > 1) {
-            key += '.';
-        }
-        key += segments[i];
-    }
-
-    std::size_t grow_step = initial_grow_step_.load(std::memory_order_relaxed);
-    const int max_grow_retries = max_grow_retries_.load(std::memory_order_relaxed);
-
-    for (int attempt = 0; attempt <= max_grow_retries; ++attempt) {
-        try {
-            auto* segment_mgr = source->storage->file.get_segment_manager();
-            auto* map = as_dataset_map(source->dataset_map);
-
-            // Crear InterprocessString para la clave
-            InterprocessString ipc_key(key.c_str(), segment_mgr->get_allocator<char>());
-
-            // Insertar o reemplazar en el map (escritura directa en mmap)
-            auto it = map->find(ipc_key);
-            if (it == map->end()) {
-                map->emplace(ipc_key, InterprocessValue(value, segment_mgr));
-            } else {
-                InterprocessValue next_value(value, segment_mgr);
-                InterprocessValue previous_value = it->second;
-                it->second = next_value;
-                previous_value.destroy(segment_mgr);
-            }
-
-            if (!source->storage->file.flush()) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            return last_status_ = Status::ok;
-        } catch (const bip::interprocess_exception&) {
-            if (attempt == max_grow_retries) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            const std::string source_file_path = source->file_path;
-            const std::size_t current_file_size = source->storage->file.get_size();
-            const std::size_t base_step = initial_grow_step_.load(std::memory_order_relaxed);
-            const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
-
-            if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            source = find_source(dataset_id);
-            if (source == nullptr || !source->storage || !source->dataset_map) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            grow_step = dynamic_step * 2;
-        }
-    }
-
-    return last_status_ = Status::file_write_error;
-}
-*/
 
 Status Store::clear(std::string_view key_path) {
     std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
@@ -683,6 +605,7 @@ Status Store::clear(std::string_view key_path) {
     auto* map = as_dataset_map(source->dataset_map);
 
     if (segments.size() == 1) {
+        // If it's just the dataset, delete EVERYTHING (includes __root__ and any other key)
         map->clear();
         if (!source->storage->file.flush()) {
             return last_status_ = Status::file_write_error;
@@ -695,6 +618,7 @@ Status Store::clear(std::string_view key_path) {
         return last_status_ = Status::ok;
     }
 
+    // If it's a subkey, build the prefix normally
     std::string prefix;
     for (std::size_t i = 1; i < segments.size(); ++i) {
         if (i > 1) {
@@ -772,6 +696,132 @@ bool Store::has(std::string_view key_path) const {
     return get(key_path).has_value();
 }
 
+Status Store::set_datasetview_impl(std::string_view key_path, const DatasetView& view) {
+    // Verify the DatasetView has a source
+    if (view.source_ == nullptr) {
+        return last_status_ = Status::invalid_key_path;
+    }
+
+    // Validate and parse destination key_path
+    std::vector<std::string_view> segments;
+    if (!split_key_path(key_path, segments) || segments.empty()) {
+        return last_status_ = Status::invalid_key_path;
+    }
+
+    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+
+    const std::string_view dest_dataset_id = segments.front();
+    auto dest_source_it = std::find_if(sources_.begin(), sources_.end(), [dest_dataset_id](const Source& source) {
+        return source.id == dest_dataset_id;
+    });
+
+    if (dest_source_it == sources_.end()) {
+        return last_status_ = Status::dataset_not_found;
+    }
+
+    Source& dest_source = *dest_source_it;
+    if (!dest_source.file_lock) {
+        return last_status_ = Status::file_not_found;
+    }
+
+    // Acquire locks in a consistent order to avoid deadlock
+    // If source and destination are the same, acquire the lock only once
+    std::unique_lock<std::shared_mutex> guard_first;
+    std::unique_lock<std::shared_mutex> guard_second;
+
+    if (&dest_source == view.source_) {
+        // Same dataset - acquire lock once
+        guard_first = std::unique_lock<std::shared_mutex>(*dest_source.file_lock);
+    } else {
+        // Different datasets - acquire in order of pointer address to avoid deadlock
+        if (dest_source.file_lock.get() < view.source_->file_lock.get()) {
+            guard_first = std::unique_lock<std::shared_mutex>(*dest_source.file_lock);
+            guard_second = std::unique_lock<std::shared_mutex>(*view.source_->file_lock);
+        } else {
+            guard_first = std::unique_lock<std::shared_mutex>(*view.source_->file_lock);
+            guard_second = std::unique_lock<std::shared_mutex>(*dest_source.file_lock);
+        }
+    }
+
+    if (!dest_source.dataset_map || !dest_source.storage || !view.source_->dataset_map || !view.source_->storage) {
+        return last_status_ = Status::file_not_found;
+    }
+
+    auto* dest_map = as_dataset_map(dest_source.dataset_map);
+    auto* src_map = as_dataset_map(view.source_->dataset_map);
+
+    // Build the destination key
+    std::string dest_key;
+    for (std::size_t i = 1; i < segments.size(); ++i) {
+        if (i > 1) dest_key += '.';
+        dest_key += segments[i];
+    }
+
+    // Get the prefix from the view (source key)
+    const std::string& src_prefix = view.prefix_;
+    std::string src_pattern = src_prefix.empty() ? "" : src_prefix + ".";
+
+    // 1. Delete destination if it exists
+    if (!dest_key.empty()) {
+        // Delete the exact key if it exists
+        dest_map->erase(InterprocessString(dest_key.c_str(), dest_source.storage->file.get_segment_manager()->get_allocator<char>()));
+        
+        // Delete all keys under the destination prefix
+        std::string dest_pattern = dest_key + ".";
+        auto it = dest_map->begin();
+        while (it != dest_map->end()) {
+            std::string_view key(it->first.c_str(), it->first.size());
+            if (key.starts_with(dest_pattern)) {
+                it = dest_map->erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // 2. Copy all keys from source to destination
+    for (const auto& [src_ipc_key, src_ipc_value] : *src_map) {
+        std::string_view src_full_key(src_ipc_key.c_str(), src_ipc_key.size());
+        
+        // Verify if this key belongs to the subtree of the view
+        bool matches = false;
+        std::string new_key;
+
+        if (src_prefix.empty()) {
+            // The view is the dataset root, copy everything
+            matches = true;
+            new_key = dest_key.empty() ? std::string(src_full_key) : dest_key + "." + std::string(src_full_key);
+        } else {
+            // The view is a subtree, copy only matching keys
+            if (src_full_key == src_prefix || src_full_key.starts_with(src_pattern)) {
+                matches = true;
+                if (src_full_key == src_prefix) {
+                    // It's the exact key (node with value)
+                    new_key = dest_key;
+                } else {
+                    // It's a descendant, extract the relative part
+                    std::string_view relative = src_full_key.substr(src_pattern.size());
+                    new_key = dest_key.empty() ? std::string(relative) : dest_key + "." + std::string(relative);
+                }
+            }
+        }
+
+        if (matches) {
+            // Copy the value
+            auto segment_mgr = dest_source.storage->file.get_segment_manager();
+            auto allocator = segment_mgr->get_allocator<char>();
+            
+            InterprocessString new_key_ipc(new_key.c_str(), allocator);
+            InterprocessValue new_value_ipc(src_ipc_value.c_str(), src_ipc_value.size(), allocator);
+
+            auto* dest_map_typed = as_dataset_map(dest_source.dataset_map);
+            dest_map_typed->insert_or_assign(new_key_ipc, new_value_ipc);
+        }
+    }
+
+    return last_status_ = Status::ok;
+}
+
 std::optional<akasha::Store::DatasetView> Store::get_dataset_view(std::string_view key_path) const {
     std::vector<std::string_view> segments;
     if (!split_key_path(key_path, segments) || segments.empty()) {
@@ -800,12 +850,18 @@ std::optional<akasha::Store::DatasetView> Store::get_dataset_view(std::string_vi
         return std::nullopt;
     }
 
-    // Caso 1: Solo dataset (sin clave específica) -> retornar DatasetView
+    auto* map = as_dataset_map(source.dataset_map);
+
+    // Case 1: Dataset only (no specific key)
     if (segments.size() == 1) {
-        return DatasetView{&source};
+        // Always return a view of the dataset (even if empty)
+        // Allows virtual navigation
+        // NOTE: prefix_ must be empty for dataset root, because the map
+        // is already filtered by dataset and contains keys without the dataset prefix
+        return DatasetView{&source, ""};
     }
 
-    // Caso 2: Clave específica -> buscar en el map
+    // Case 2+: Specific key -> build the complete path
     std::string key;
     for (std::size_t i = 1; i < segments.size(); ++i) {
         if (i > 1) {
@@ -814,24 +870,24 @@ std::optional<akasha::Store::DatasetView> Store::get_dataset_view(std::string_vi
         key += segments[i];
     }
 
-    // Buscar clave exacta
-    auto* map = as_dataset_map(source.dataset_map);
+    // First check if there's an exact value (O(log n) lookup)
     auto it = map->find(InterprocessString(key.c_str(), source.storage->file.get_segment_manager()->get_allocator<char>()));
     if (it != map->end()) {
-        // Encontrado como valor -> no hay View, solo bytes
-        return std::nullopt;
+        // Has exact value -> return view immediately
+        return DatasetView{&source, key};
     }
 
-    // Caso 3: Puede ser un prefijo (subárbol) -> verificar si hay claves con este prefijo
+    // No exact value found, check if it's a prefix (existing subtree)
     std::string prefix = key + ".";
     for (const auto& [ipc_key, ipc_value] : *map) {
         std::string_view full_key(ipc_key.c_str(), ipc_key.size());
-        if (full_key.starts_with(prefix) || full_key == key) {
-            // Hay al menos una clave con este prefijo -> es un sub<árbol
+        if (full_key.starts_with(prefix)) {
+            // There are keys under this prefix -> return View
             return DatasetView{&source, key};
         }
     }
 
+    // Key doesn't exist as value or prefix -> return nullopt
     return std::nullopt;
 }
 
@@ -839,47 +895,63 @@ bool Store::DatasetView::has(std::string_view key_path) const {
     return get(key_path).has_value();
 }
 
-// TODO: Implementar get_dataset_view() para DatasetView si es necesario
-/*
-std::optional<akasha::Store::DatasetView> Store::DatasetView::get_dataset_view(std::string_view key_path) const {
+bool Store::DatasetView::has_value() const {
     if (source_ == nullptr || !source_->file_lock) {
-        return std::nullopt;
+        return false;
     }
 
     std::shared_lock<std::shared_mutex> read_guard(*source_->file_lock);
 
     if (!source_->dataset_map || !source_->storage) {
-        return std::nullopt;
+        return false;
     }
 
     auto* map = as_dataset_map(source_->dataset_map);
 
-    // Construir clave completa: prefix_ + key_path
-    std::string full_key;
-    if (!prefix_.empty()) {
-        full_key = prefix_ + ".";
-    }
-    full_key += key_path;
-
-    // Buscar clave exacta
-    auto it = map->find(InterprocessString(full_key.c_str(), source_->storage->file.get_segment_manager()->get_allocator<char>()));
-    if (it != map->end()) {
-        // Encontrado como valor -> no hay View, solo bytes
-        return std::nullopt;
+    // If prefix_ is empty, it's dataset root -> search for "__root__"
+    if (prefix_.empty()) {
+        auto it = map->find(InterprocessString("__root__", source_->storage->file.get_segment_manager()->get_allocator<char>()));
+        return it != map->end();
     }
 
-    // Verificar si es un prefijo (subárbol)
-    std::string prefix = full_key + ".";
+    // For any other key, search for the exact key
+    auto it = map->find(InterprocessString(prefix_.c_str(), source_->storage->file.get_segment_manager()->get_allocator<char>()));
+    return it != map->end();
+}
+
+bool Store::DatasetView::has_keys() const {
+    if (source_ == nullptr || !source_->file_lock) {
+        return false;
+    }
+
+    std::shared_lock<std::shared_mutex> read_guard(*source_->file_lock);
+
+    if (!source_->dataset_map || !source_->storage) {
+        return false;
+    }
+
+    auto* map = as_dataset_map(source_->dataset_map);
+
+    // Check if there are keys under this prefix
+    std::string prefix = prefix_.empty() ? "" : prefix_ + ".";
+    std::size_t prefix_len = prefix.size();
+
     for (const auto& [ipc_key, ipc_value] : *map) {
-        std::string_view k(ipc_key.c_str(), ipc_key.size());
-        if (k.starts_with(prefix) || k == full_key) {
-            return DatasetView{source_, full_key};
+        std::string_view full_key(ipc_key.c_str(), ipc_key.size());
+
+        if (prefix.empty()) {
+            // In the dataset root, search for any key that is not "__root__"
+            if (full_key != "__root__") {
+                return true;
+            }
+        } else if (full_key.starts_with(prefix)) {
+            // There are keys under this prefix
+            return true;
         }
     }
 
-    return std::nullopt;
+    return false;
 }
-*/
 
 std::vector<std::string> Store::DatasetView::keys() const {
     std::vector<std::string> result;
@@ -896,7 +968,7 @@ std::vector<std::string> Store::DatasetView::keys() const {
 
     auto* map = as_dataset_map(source_->dataset_map);
 
-    // Encontrar todas las claves bajo este prefijo
+    // Find all keys under this prefix
     std::string prefix = prefix_.empty() ? "" : prefix_ + ".";
     std::size_t prefix_len = prefix.size();
 
@@ -906,13 +978,13 @@ std::vector<std::string> Store::DatasetView::keys() const {
         if (prefix.empty() || full_key.starts_with(prefix)) {
             std::string_view relative_key = full_key.substr(prefix_len);
             
-            // Solo incluir claves de primer nivel (sin puntos adicionales)
+            // Only include first-level keys (no additional dots)
             std::size_t dot_pos = relative_key.find('.');
             if (dot_pos == std::string_view::npos) {
-                // Es una clave directa
+                // It's a direct key
                 result.emplace_back(relative_key);
             } else {
-                // Es una subclave, agregar solo el prefijo si no está ya
+                // It's a subkey, add only the prefix if not already
                 std::string first_segment(relative_key.substr(0, dot_pos));
                 if (std::find(result.begin(), result.end(), first_segment) == result.end()) {
                     result.push_back(std::move(first_segment));

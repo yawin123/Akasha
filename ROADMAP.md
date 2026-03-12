@@ -271,6 +271,7 @@ Próximo paso: 1.0.0 release con API stability guarantee.
 - Validación de zero-copy architecture documentada.
 - API estable lista para producción.
 - Unload() implementado (simetría con load()).
+- **Single-segment keypaths**: Permitir valores a nivel de dataset (`"counter"` además de `"config.timeout"`).
 - Compilación ejemplos opt-in (BUILD_EXAMPLE=ON requerido).
 - CMake auto-resetea BUILD_EXAMPLE a OFF después de compilar.
 - Task "📦 Compilar ejemplos" para compilación intencional.
@@ -293,20 +294,21 @@ Próxima versión: 1.0.0 (release estable)
 
 ## 1.0.0 — Release estable (Planeado)
 
-**Meta:** primera versión estable orientada a producción.
+**Meta:** primera versión estable orientada a producción como librería estática para integración como submódulo.
 
 **Entregables:**
 
-- API estable documentada.
-- Matriz mínima de compatibilidad (compilador/SO) publicada.
-- Changelog y guía de migración desde 0.x.
-- Tag/release reproducible en CI.
+- Documentación completa en `include/akasha.hpp` con inline comments detallados.
+- `REFERENCE.md` con guía de API bien explicada y ejemplos de uso.
+- Matriz de compatibilidad con lo que tenemos (compiladores, versiones mínimas testeadas).
+- Validación de integración como submódulo Git en proyecto ajeno.
 
 **Criterios de salida 1.0.0:**
 
 - Sin issues críticos abiertos en core API, parseo y resolución por dataset.
-- Contratos de errores y comportamiento documentados.
-- Build e integración verificables desde cero con Conan + CMake.
+- HPP documentado de forma clara y completa.
+- REFERENCE.md proporciona guía de referencia comprensible.
+- Verificación exitosa de integración: `git submodule add`, `add_subdirectory()`, compilación y uso funcional.
 
 ## Fuera de alcance (antes de 1.0.0)
 
