@@ -1,102 +1,226 @@
-# Akasha
+# Akasha — Zero-Copy C++23 Storage
 
-Akasha es una librería C++23 orientada a la gestión de datos configurables y estructurados, diseñada para cargar múltiples fuentes de datos y exponer su acceso de forma uniforme.
+Akasha is a minimalist C++23 library for storing and retrieving data in memory-mapped files (mmap), prioritizing **low latency**, **direct persistence**, and **type safety**.
 
-El objetivo principal es que los consumidores de la librería trabajen con una interfaz simple basada en tres conceptos:
+Designed to be embedded in projects as a Git submodule — no complex build dependencies, no global installation, no binary artifacts.
 
-- **Set de datos**: conjunto lógico que agrupa información cargada desde un fichero.
-- **Clave**: identificador del dato dentro de un set.
-- **Valor**: contenido asociado a la clave.
+## Why Akasha?
 
-## Visión del proyecto
+- **Zero-copy reads**: data read directly from mmap, no intermediate buffering.
+- **Direct writes**: values persisted directly to the mapped file in a single atomic operation.
+- **Simple API**: load datasets, type-safe get/set, hierarchical navigation with dot notation.
+- **Low overhead**: no statistics, no trackers, no background workers.
+- **Type-safe templates**: `get<T>()`, `set<T>()` with compile-time validation of copyable types.
+- **Unified error handling**: `Status` enum for diagnostics, no exceptions.
 
-Akasha actúa como una capa de abstracción sobre distintos ficheros de datos. Conceptualmente, puede pensarse como abrir varios documentos tipo JSON y consultar sus claves, pero en este proyecto se empleará:
+## Name Origin
 
-- **FlexData** como formato/base de datos de entrada.
-- **Boost.Interprocess** para soportar estrategias de compartición/interacción entre procesos.
+**Akasha** comes from Sanskrit **ākāśa** (आकाश), meaning "ether," "space," or "sky." In Indian philosophy, *ākāśa* represents the subtle, all-pervading medium that enables the existence and transmission of all manifestations — a universal space containing all things.
 
-La librería debe permitir cargar *N* ficheros de datos y resolver lecturas/escrituras sin que el usuario final tenga que preocuparse por los detalles internos de almacenamiento o transporte.
+The metaphor fits: Akasha is a unified space where data from multiple sources aggregates, organizes, and resolves through a single interface. Just as *ākāśa* is the fundamental medium in philosophy, Akasha is the fundamental storage layer for your application's data.
 
-## Modelo de acceso
+## Requirements
 
-El acceso está diseñado para ser transparente y consistente, utilizando la semántica:
+- **Compiler**: C++23 (GCC 13+, Clang 16+, MSVC 194+)
+- **Dependencies**: Boost.Interprocess (managed automatically by Conan)
 
-`set de datos` + `clave` + `valor`
-
-Además, las claves soportan notación jerárquica por segmentos (dot notation), por ejemplo:
-
-- `core.timeout` → clave `timeout` dentro del grupo `core`.
-
-Este enfoque simplifica la organización de datos complejos y mantiene una API intuitiva para los usuarios de la librería.
-
-## ¿Por qué el nombre Akasha?
-
-El nombre **Akasha** proviene del sánscrito **ākāśa**, término que suele traducirse como “éter”, “espacio” o “cielo”. En tradiciones filosóficas de la India, *ākāśa* se entiende como el medio sutil que contiene o posibilita la existencia y transmisión de las cosas.
-
-Con el tiempo, ese concepto también se popularizó (especialmente en corrientes esotéricas) como la idea de un “registro” o repositorio universal de información. Aunque el proyecto no adopta ese marco espiritual, sí toma la metáfora técnica: una capa común donde datos de múltiples orígenes se agregan, se ordenan y se consultan con una interfaz uniforme.
-
-Por eso **Akasha** encaja con la librería: porque expresa la noción de “espacio unificado de datos”, independientemente del fichero o backend del que provenga cada valor.
-
-## Estado actual
-
-El repositorio está configurado como librería **estática** en **C++23**. Este enfoque facilita encapsular dependencias internas y ofrecer una integración más predecible a los consumidores.
-
-Estructura base actual:
-
-```text
-.
-├── CMakeLists.txt
-├── cmake/BundleStaticArchive.cmake
-├── include/akasha.hpp
-├── src/akasha.cpp
-└── apps/example.cpp
-```
-
-## Dependencias y empaquetado
-
-Akasha usa **Conan** para gestionar sus dependencias:
-
-- **Boost 1.90.0** (especialmente `Boost.Interprocess`)
-- **FlatBuffers 25.9.23** (FlexBuffers)
-
-Las dependencias se especifican en `conanfile.py` y se instalan automáticamente via Conan.
-
-En CMake, Akasha expone dos modos:
-
-- **Modo normal (recomendado por defecto)**: construye `libakasha.a` y enlaza dependencias estáticas en el binario final consumidor.
-- **Modo single-archive (opcional)**: genera `libakasha_bundle.a`, intentando agrupar Akasha y sus archivos estáticos dependientes en un único artefacto.
-
-Opciones disponibles:
-
-- `AKASHA_DEP_TARGETS`: lista separada por `;` con targets estáticos CMake a enlazar como dependencias privadas.
-- `AKASHA_BUNDLE_ARCHIVES`: lista separada por `;` con rutas adicionales a `.a` para incluir en el bundle.
-- `AKASHA_BUILD_SINGLE_ARCHIVE`: `ON/OFF` para activar la creación de `libakasha_bundle.a`.
-
-## Compilación
-
-Primero, instala las dependencias con Conan:
+## Installation as Submodule
 
 ```bash
+git submodule add https://git.yawin.es/personal/akasha.git vendor/akasha
+```
+Or if you prefer, from GitHub
+
+```bash
+git submodule add https://github.com/yawin123/Akasha.git vendor/akasha
+```
+
+## Building
+
+### Build Akasha Locally
+
+After cloning (or adding as submodule), install dependencies and build:
+
+```bash
+cd vendor/akasha  # or your Akasha checkout
 conan install . --output-folder=build --build=missing
-```
-
-Build normal:
-
-```bash
 cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake
 cmake --build .
 ```
 
-Build con bundle (archivo único):
+### Integrate into Your Project
 
-```bash
-cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake \
-	-DAKASHA_DEP_TARGETS="dep1;dep2" \
-	-DAKASHA_BUILD_SINGLE_ARCHIVE=ON
-cmake --build . --target akasha_bundle
+In your `CMakeLists.txt`:
+
+```cmake
+add_subdirectory(vendor/akasha)
+target_link_libraries(myapp akasha::akasha)
 ```
 
-> Nota: el modo `single-archive` usa `ar/ranlib` y está orientado a toolchains tipo GNU/Unix.
+## Quick Start
 
+```cpp
+#include <akasha.hpp>
+
+akasha::Store store;
+
+// Load dataset (persistent file)
+auto status = store.load("app_config", "/path/to/config.db", true);
+if (status != akasha::Status::ok) {
+    std::cerr << "Error: " << static_cast<int>(status) << '\n';
+}
+
+// Write typed values
+store.set<int64_t>("app_config.timeout", 30);
+store.set<bool>("app_config.debug", true);
+store.set<std::string>("app_config.name", "MyApp");
+
+// Read values
+auto timeout = store.get<int64_t>("app_config.timeout");
+if (timeout.has_value()) {
+    std::cout << "Timeout: " << timeout.value() << " seconds\n";
+}
+
+// Get or set default
+auto max_retries = store.getorset<int64_t>("app_config.max_retries", 5);
+
+// Unload dataset
+if (store.unload("config") != akasha::Status::ok) {
+    std::cerr << "Error: " << static_cast<int>(store.last_status());
+}
+```
+
+See more examples in [examples/](examples/).
+
+## Development (Local Build)
+
+```bash
+conan install . --output-folder=build --build=missing
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake
+cmake --build .
+./akasha_example
+```
+
+## API Reference
+
+Full documentation in [include/akasha.hpp](include/akasha.hpp).
+
+### Documentation Files
+
+- **[REFERENCE.md](REFERENCE.md)** — Comprehensive API guide with examples and use cases
+
+### Store Methods
+
+- `load(source_id, file_path, create_if_missing)` → `Status`
+- `unload(source_id)` → `Status`
+- `set<T>(key_path, value)` → `Status`
+- `get<T>(key_path)` → `std::optional<T>`
+- `getorset<T>(key_path, default)` → `std::optional<T>`
+- `has(key_path)` → `bool`
+- `clear(key_path = {})` → `Status`
+- `compact(dataset_id = {})` → `Status`
+- `last_status()` → `Status`
+
+### Supported Types
+
+- Scalars: `bool`, `char`, `int32_t`, `uint32_t`, `int64_t`, `uint64_t`, `double`, `float`
+- Strings: `std::string`
+- Structs: Any `trivially_copyable` type
+
+### Status Enum
+
+Error codes: `ok`, `invalid_key_path`, `key_conflict`, `file_read_error`, `file_write_error`, `file_not_found`, `file_full`, `parse_error`, `dataset_not_found`, `source_already_loaded`.
+
+## Example Programs (Learning the API)
+
+All examples compile with `cmake --build build` and run from `./build/akasha_*`.
+
+### 1. Quickstart (`quickstart.cpp`)
+**What it teaches:** Basic API usage (load, set, get, getorset, unload)
+
+**Questions answered:**
+- How do I load a dataset?
+- How do I write and read values?
+- How do I set a default if a key doesn't exist?
+- How do I unload a dataset?
+
+### 2. Error Handling (`error_handling.cpp`)
+**What it teaches:** Status enum validation and error handling patterns
+
+**Questions answered:**
+- How do I detect errors?
+- What error codes exist?
+- How do I validate operations?
+
+### 3. Multiple Datasets (`multiple_datasets.cpp`)
+**What it teaches:** Loading multiple independent data sources in one Store
+
+**Questions answered:**
+- Can I load multiple datasets?
+- Are they isolated from each other?
+- How do I prevent accidental reloading?
+
+### 4. Navigation & Introspection (`navigation.cpp`)
+**What it teaches:** Checking existence, listing contents, hierarchical queries
+
+**Questions answered:**
+- Can I check if a key exists?
+- Can I list what's in a branch?
+- How do I navigate hierarchical data?
+
+### 5. Cleanup & Lifecycle (`cleanup.cpp`)
+**What it teaches:** Deletion and compaction operations
+
+**Questions answered:**
+- How do I delete data?
+- Can I delete just a branch?
+- How do I reclaim storage space?
+- What happens after many deletions?
+
+### 6. Nested Structures (`nested_data.cpp`)
+**What it teaches:** Storing and retrieving complex trivially-copyable structs
+
+**Questions answered:**
+- Can I store nested structures?
+- Are structs preserved exactly as stored?
+- Can I store smaller structs from components?
+
+### 7. Performance Benchmarks (`benchmarks.cpp`)
+**What it teaches:** Measuring throughput and validating zero-copy architecture
+
+Runs comprehensive tests for load, read, write operations across scalars, strings, and structs.
+
+**Questions answered:**
+- How fast are reads and writes?
+- Is zero-copy really faster?
+- How does performance scale?
+
+### 8. DatasetView Navigation (`datasetview.cpp`)
+**What it teaches:** Advanced hierarchical navigation, introspection, and subtree copying
+
+**Questions answered:**
+- How do I navigate subtrees?
+- Can I check if a node has children or a direct value?
+- How do I copy entire subtree structures?
+- Can I use get-or-set with complex subtrees?
+
+---
+
+## Performance Benchmarks
+
+Results measured on Intel i7-13700K, Ubuntu 22.04 LTS. Run with `./build/akasha_benchmarks`.
+
+| Operation | Throughput | Notes |
+|-----------|-----------|-------|
+| Load empty dataset | 13,717 ops/sec | File creation overhead |
+| Write scalar (int64) | 848K / 803K ops/sec | 1K and 10K keys |
+| Read scalar (int64) | 3.8M / 3.1M ops/sec | Zero-copy performance |
+| Write string | 539K / 546K ops/sec | Serialized as [length][chars] |
+| Read string | 3.6M / 2.9M ops/sec | mmap zero-copy reads |
+| Write struct | 601K / 607K ops/sec | trivially_copyable types |
+| Read struct | 3.8M / 3.0M ops/sec | Consistent with scalar |
+| Compact (50% deleted) | 7.3K / 4.3K ops/sec | 5K and 10K keys |
+
+**Key insight:** Reads are **5-7x faster** than writes — validates zero-copy mmap architecture.

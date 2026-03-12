@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 0.1.0 LANGUAGES CXX)
+project(Akasha VERSION 0.9.0 LANGUAGES CXX)
 
-option(BUILD_EXAMPLE "Build example application" ON)
+option(BUILD_EXAMPLE "Build example application" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
 
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
 
-# Buscar dependencias de Conan
+# Find Conan dependencies - add first to have priority
+list(PREPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 find_package(Boost REQUIRED)
-find_package(flatbuffers REQUIRED)
 
 add_library(akasha STATIC
     src/akasha.cpp
@@ -26,10 +26,14 @@ target_include_directories(akasha
 
 target_compile_features(akasha PUBLIC cxx_std_23)
 
+target_compile_definitions(akasha
+    PUBLIC
+        AKASHA_VERSION="${CMAKE_PROJECT_VERSION}"
+)
+
 target_link_libraries(akasha 
     PRIVATE 
-        Boost::boost
-        flatbuffers::flatbuffers
+    Boost::boost
 )
 
 if(AKASHA_DEP_TARGETS)
@@ -37,13 +41,47 @@ if(AKASHA_DEP_TARGETS)
 endif()
 
 if(BUILD_EXAMPLE)
-    add_executable(akasha_example apps/example.cpp)
-    target_link_libraries(akasha_example PRIVATE akasha::akasha)
+    # Teaching examples demonstrating API capabilities
+    
+    # 1. Quick start: basic load, set, get, getorset, unload
+    add_executable(akasha_quickstart examples/quickstart.cpp)
+    target_link_libraries(akasha_quickstart PRIVATE akasha::akasha)
+    
+    # 2. Error handling: Status enum validation
+    add_executable(akasha_error_handling examples/error_handling.cpp)
+    target_link_libraries(akasha_error_handling PRIVATE akasha::akasha)
+    
+    # 3. Multiple datasets: loading multiple sources in one Store
+    add_executable(akasha_multiple_datasets examples/multiple_datasets.cpp)
+    target_link_libraries(akasha_multiple_datasets PRIVATE akasha::akasha)
+    
+    # 4. Navigation and introspection: DatasetView, has(), keys()
+    add_executable(akasha_navigation examples/navigation.cpp)
+    target_link_libraries(akasha_navigation PRIVATE akasha::akasha)
+    
+    # 5. Cleanup and lifecycle: clear() and compact() demonstrations
+    add_executable(akasha_cleanup examples/cleanup.cpp)
+    target_link_libraries(akasha_cleanup PRIVATE akasha::akasha)
+    
+    # 6. Nested data structures: trivially copyable structs
+    add_executable(akasha_nested_data examples/nested_data.cpp)
+    target_link_libraries(akasha_nested_data PRIVATE akasha::akasha)
+    
+    # 7. Benchmarks: performance measurements
+    add_executable(akasha_benchmarks examples/benchmarks.cpp)
+    target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
+    
+    # 8. DatasetView: subtree navigation, introspection, and copying
+    add_executable(akasha_datasetview examples/datasetview.cpp)
+    target_link_libraries(akasha_datasetview PRIVATE akasha::akasha)
+    
+    # Reset BUILD_EXAMPLE to OFF after processing so next build doesn't compile examples
+    set(BUILD_EXAMPLE OFF CACHE BOOL "Build example application" FORCE)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)
     if(NOT CMAKE_AR)
-        message(FATAL_ERROR "AKASHA_BUILD_SINGLE_ARCHIVE requiere una herramienta 'ar' disponible en CMAKE_AR")
+        message(FATAL_ERROR "AKASHA_BUILD_SINGLE_ARCHIVE requires an 'ar' tool available in CMAKE_AR")
     endif()
 
     set(_akasha_bundle_inputs "$<TARGET_FILE:akasha>")

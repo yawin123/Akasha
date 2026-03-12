@@ -1,72 +1,95 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "🧹 Limpiar build",
-            "type": "shell",
-            "command": "rm",
-            "args": [
-                "-rf",
-                "build"
-            ],
-            "group": "build",
-            "problemMatcher": [],
-            "detail": "Elimina el directorio build completo"
-        },
-        {
-            "label": "⚙️ Configurar proyecto (Conan + CMake)",
-            "type": "shell",
-            "command": "conan install . --output-folder=build --build=missing -s build_type=Release && cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
-            "group": "build",
-            "problemMatcher": [],
-            "dependsOn": ["🧹 Limpiar build"],
-            "detail": "Limpia, instala dependencias con Conan y configura el proyecto con CMake (puede tardar en la primera ejecución)"
-        },
-        {
-            "label": "🔨 Compilar",
-            "type": "shell",
-            "command": "cmake",
-            "args": [
-                "--build",
-                "build",
-                "-j"
-            ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": "$gcc",
-            "detail": "Compila el proyecto"
-        },
-        {
-            "label": "🪛 Recompilar",
-            "type": "shell",
-            "command": "cmake",
-            "args": [
-                "--build",
-                "build",
-                "--clean-first",
-                "-j"
-            ],
-            "group": "build",
-            "problemMatcher": "$gcc",
-            "detail": "Limpia y recompila el proyecto completo"
-        },
-        {
-            "label": "🚀 Ejecutar ejemplo",
-            "type": "shell",
-            "command": "${workspaceFolder}/build/akasha_example",
-            "group": "test",
-            "problemMatcher": [],
-            "detail": "Ejecuta el programa de ejemplo",
-            "presentation": {
-                "echo": true,
-                "reveal": "always",
-                "focus": true,
-                "panel": "shared",
-                "showReuseMessage": false,
-                "clear": false
-            }
-        }
-    ]
+	"version": "2.0.0",
+	"inputs": [
+		{
+			"id": "selectExample",
+			"type": "pickString",
+			"description": "Choose which example to run",
+			"options": [
+				"quickstart",
+                "datasetview",
+				"error_handling",
+				"multiple_datasets",
+				"navigation",
+				"cleanup",
+				"nested_data",
+				"benchmarks"
+			],
+			"default": "quickstart"
+		}
+	],
+	"tasks": [
+		{
+			"label": "🧹 Clean build",
+			"type": "shell",
+			"command": "rm",
+			"args": [
+				"-rf",
+				"build"
+			],
+			"group": "build",
+			"problemMatcher": [],
+			"detail": "Deletes the entire build directory"
+		},
+		{
+			"label": "⚙️ Configure project (Conan + CMake)",
+			"type": "shell",
+			"command": "conan install . --output-folder=build --build=missing -s build_type=Release && cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
+			"group": "build",
+			"problemMatcher": [],
+			"dependsOn": [
+				"🧹 Clean build"
+			],
+			"detail": "Cleans, installs dependencies with Conan, and configures the project with CMake (may take time on first run)"
+		},
+		{
+			"label": "🔨 Compile",
+			"type": "shell",
+			"command": "cmake . -B build > /dev/null 2>&1 && cmake --build build -j",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": "$gcc",
+			"detail": "Compiles the project (library only)"
+		},
+		{
+			"label": "🪛 Recompile",
+			"type": "shell",
+			"command": "cmake",
+			"args": [
+				"--build",
+				"build",
+				"--clean-first",
+				"-j"
+			],
+			"group": "build",
+			"problemMatcher": "$gcc",
+			"detail": "Cleans and recompiles the entire project"
+		},
+		{
+			"label": "📦 Compile examples",
+			"type": "shell",
+			"command": "cmake . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLE=ON && cmake --build build -j",
+			"group": "build",
+			"problemMatcher": "$gcc",
+			"detail": "Compiles the examples (CMAKE resets BUILD_EXAMPLE to OFF afterwards)"
+		},
+		{
+			"label": "🚀 Run example",
+			"type": "shell",
+			"command": "${workspaceFolder}/build/akasha_${input:selectExample}",
+			"group": "test",
+			"problemMatcher": [],
+			"detail": "Select and run one of the examples",
+			"presentation": {
+				"echo": true,
+				"reveal": "always",
+				"focus": true,
+				"panel": "shared",
+				"showReuseMessage": true,
+				"clear": false
+			}
+		}
+	]
 }
