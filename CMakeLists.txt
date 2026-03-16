@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 0.9.0 LANGUAGES CXX)
+project(Akasha VERSION 1.0.0 LANGUAGES CXX)
 
+# Options can be set from CMake or from Conan
 option(BUILD_EXAMPLE "Build example application" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
 
@@ -121,8 +122,14 @@ install(TARGETS akasha
 
 install(FILES include/akasha.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(EXPORT akashaTargets
-    FILE akashaTargets.cmake
-    NAMESPACE akasha::
+# Configure akashaConfig.cmake from template
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/akashaConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/akashaConfig.cmake"
+    @ONLY
+)
+
+# Install akashaConfig.cmake
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/akashaConfig.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/akasha
 )
