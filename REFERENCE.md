@@ -106,7 +106,7 @@ if (retries.has_value()) {
 }
 ```
 
-Reads directly from memory-mapped file (zero-copy for scalar types).
+Reads from memory-mapped file and returns a copy of the stored value.
 
 **Behavior:**
 - If the key does not exist or has no value, returns `std::nullopt`.

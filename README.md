@@ -1,4 +1,4 @@
-# Akasha — Zero-Copy C++23 Storage
+# Akasha — C++23 mmap Storage
 
 Akasha is a minimalist C++23 library for storing and retrieving data in memory-mapped files (mmap), prioritizing **low latency**, **direct persistence**, and **type safety**.
 
@@ -6,7 +6,7 @@ Designed to be embedded in projects as a Git submodule — no complex build depe
 
 ## Why Akasha?
 
-- **Zero-copy reads**: data read directly from mmap, no intermediate buffering.
+- **mmap-backed persistence**: data lives in memory-mapped files; the OS syncs pages to disk implicitly.
 - **Direct writes**: values persisted directly to the mapped file in a single atomic operation.
 - **Simple API**: load datasets, type-safe get/set, hierarchical navigation with dot notation.
 - **Low overhead**: no statistics, no trackers, no background workers.
@@ -188,13 +188,10 @@ All examples compile with `cmake --build build` and run from `./build/akasha_*`.
 - Can I store smaller structs from components?
 
 ### 7. Performance Benchmarks (`benchmarks.cpp`)
-**What it teaches:** Measuring throughput and validating zero-copy architecture
-
-Runs comprehensive tests for load, read, write operations across scalars, strings, and structs.
+**What it teaches:** Measuring throughput of load, read, and write operations across scalars, strings, and structs.
 
 **Questions answered:**
 - How fast are reads and writes?
-- Is zero-copy really faster?
 - How does performance scale?
 
 ### 8. DatasetView Navigation (`datasetview.cpp`)
@@ -216,11 +213,11 @@ Results measured on Intel i7-13700K, Ubuntu 22.04 LTS. Run with `./build/akasha_
 |-----------|-----------|-------|
 | Load empty dataset | 13,717 ops/sec | File creation overhead |
 | Write scalar (int64) | 848K / 803K ops/sec | 1K and 10K keys |
-| Read scalar (int64) | 3.8M / 3.1M ops/sec | Zero-copy performance |
+| Read scalar (int64) | 3.8M / 3.1M ops/sec | mmap page-cache hit |
 | Write string | 539K / 546K ops/sec | Serialized as [length][chars] |
-| Read string | 3.6M / 2.9M ops/sec | mmap zero-copy reads |
+| Read string | 3.6M / 2.9M ops/sec | Deserialized from mmap |
 | Write struct | 601K / 607K ops/sec | trivially_copyable types |
 | Read struct | 3.8M / 3.0M ops/sec | Consistent with scalar |
 | Compact (50% deleted) | 7.3K / 4.3K ops/sec | 5K and 10K keys |
 
-**Key insight:** Reads are **5-7x faster** than writes — validates zero-copy mmap architecture.
+**Key insight:** Reads are **5-7x faster** than writes — mmap page-cache hits avoid system call overhead on repeated reads.
