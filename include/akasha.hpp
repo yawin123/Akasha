@@ -155,8 +155,8 @@ public:
 	 * @brief Load configuration from a memory-mapped file.
 	 *
 	 * Uses Boost.Interprocess managed_mapped_file to store directly
-	 * a map<string, value> in the file. This allows zero-copy reads
-	 * and direct writes without reserialization.
+	 * a map<string, value> in the file. Reads return copies of the stored
+	 * bytes; the OS handles implicit persistence of modified pages.
 	 *
 	 * - If the source already exists (same source_id), returns `source_already_loaded` error.
 	 *
