@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <mutex>
 #include <shared_mutex>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
@@ -563,6 +564,30 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
     std::size_t grow_step = initial_grow_step_.load(std::memory_order_relaxed);
     const int max_grow_retries = max_grow_retries_.load(std::memory_order_relaxed);
 
+    // Helper: grow file and remap after allocation failure
+    auto handle_grow_retry = [&](int attempt) -> bool {
+        if (attempt == max_grow_retries) {
+            return false;
+        }
+
+        const std::string source_file_path = source->file_path;
+        const std::size_t current_file_size = source->storage->file.get_size();
+        const std::size_t base_step = initial_grow_step_.load(std::memory_order_relaxed);
+        const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
+
+        if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
+            return false;
+        }
+
+        source = find_source(dataset_id);
+        if (source == nullptr || !source->storage || !source->dataset_map) {
+            return false;
+        }
+
+        grow_step = dynamic_step * 2;
+        return true;
+    };
+
     for (int attempt = 0; attempt <= max_grow_retries; ++attempt) {
         try {
             auto* segment_mgr = source->storage->file.get_segment_manager();
@@ -592,45 +617,19 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
 
             return last_status_ = Status::ok;
         } catch (const bip::interprocess_exception&) {
-            if (attempt == max_grow_retries) {
+            if (!handle_grow_retry(attempt)) {
                 return last_status_ = Status::file_write_error;
             }
-
-            const std::string source_file_path = source->file_path;
-            const std::size_t current_file_size = source->storage->file.get_size();
-            const std::size_t base_step = initial_grow_step_.load(std::memory_order_relaxed);
-            const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
-
-            if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            source = find_source(dataset_id);
-            if (source == nullptr || !source->storage || !source->dataset_map) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            grow_step = dynamic_step * 2;
         } catch (const boost::container::length_error&) {
-            if (attempt == max_grow_retries) {
+            if (!handle_grow_retry(attempt)) {
                 return last_status_ = Status::file_write_error;
             }
-
-            const std::string source_file_path = source->file_path;
-            const std::size_t current_file_size = source->storage->file.get_size();
-            const std::size_t base_step = initial_grow_step_.load(std::memory_order_relaxed);
-            const std::size_t dynamic_step = std::max(grow_step, std::max(base_step, current_file_size / 2));
-
-            if (!grow_and_remap_sources_for_path(source_file_path, dynamic_step)) {
+        } catch (const std::length_error&) {
+            // MSVC: Boost compiled with BOOST_CONTAINER_USE_STD_EXCEPTIONS
+            // throws std::length_error instead of boost::container::length_error
+            if (!handle_grow_retry(attempt)) {
                 return last_status_ = Status::file_write_error;
             }
-
-            source = find_source(dataset_id);
-            if (source == nullptr || !source->storage || !source->dataset_map) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            grow_step = dynamic_step * 2;
         }
     }
 
