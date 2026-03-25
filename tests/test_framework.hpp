@@ -234,8 +234,8 @@ inline int exit_code() {
 /** @brief Assert string equality */
 #define ASSERT_STREQ(actual, expected) \
     { \
-        std::string_view a = (actual); \
-        std::string_view e = (expected); \
+        std::string a = (actual); \
+        std::string e = (expected); \
         if (a != e) { \
             std::ostringstream oss; \
             oss << "ASSERT_STREQ failed at " << __FILE__ << ":" << __LINE__; \
@@ -246,8 +246,8 @@ inline int exit_code() {
 /** @brief Assert string inequality */
 #define ASSERT_STRNE(actual, expected) \
     { \
-        std::string_view a = (actual); \
-        std::string_view e = (expected); \
+        std::string a = (actual); \
+        std::string e = (expected); \
         if (a == e) { \
             std::ostringstream oss; \
             oss << "ASSERT_STRNE failed at " << __FILE__ << ":" << __LINE__; \
