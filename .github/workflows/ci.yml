@@ -1,0 +1,122 @@
+name: CI - Build & Test Examples
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }} - ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux - GCC
+          - os: ubuntu-latest
+            compiler: gcc-12
+            cxx_standard: 23
+            build_type: Release
+
+          # Linux - Clang
+          - os: ubuntu-latest
+            compiler: clang-18
+            cxx_standard: 23
+            build_type: Release
+
+          # macOS - Clang (Apple Silicon)
+          - os: macos-14
+            compiler: apple-clang
+            cxx_standard: 23
+            build_type: Release
+
+          # Windows - MSVC
+          - os: windows-latest
+            compiler: msvc
+            cxx_standard: 23
+            build_type: Release
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          TZ: UTC
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3-pip
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake ninja -y
+        shell: cmd
+
+      - name: Setup Conan
+        run: |
+          pip install --break-system-packages conan
+          conan --version
+          conan profile detect --force
+
+      - name: Create build directory (Unix)
+        if: runner.os != 'Windows'
+        run: mkdir -p build
+
+      - name: Create build directory (Windows)
+        if: runner.os == 'Windows'
+        run: if not exist build mkdir build
+        shell: cmd
+
+      - name: Install Conan dependencies (Unix)
+        if: runner.os != 'Windows'
+        run: conan install . --output-folder=build --build=missing -s build_type=${{ matrix.build_type }}
+
+      - name: Install Conan dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: conan install . --output-folder=build --build=missing -s build_type=${{ matrix.build_type }}
+        shell: cmd
+
+      - name: Configure CMake (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_EXAMPLE=OFF \
+            -DBUILD_TESTS=ON \
+            -G Ninja
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build "-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/build/conan_toolchain.cmake" "-DCMAKE_PREFIX_PATH=${{ github.workspace }}/build" -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DBUILD_EXAMPLE=OFF -DBUILD_TESTS=ON
+        shell: cmd
+
+      - name: Build library and tests (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build -j
+
+      - name: Build library and tests (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build -j --config Release
+        shell: cmd
+
+      - name: Run test suite (Unix)
+        if: runner.os != 'Windows'
+        run: build/akasha_tests
+
+      - name: Run test suite (Windows)
+        if: runner.os == 'Windows'
+        run: build\Release\akasha_tests.exe
+        shell: cmd

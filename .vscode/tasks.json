@@ -7,12 +7,13 @@
 			"description": "Choose which example to run",
 			"options": [
 				"quickstart",
-                "datasetview",
+				"datasetview",
 				"error_handling",
 				"multiple_datasets",
 				"navigation",
 				"cleanup",
 				"nested_data",
+				"compaction",
 				"benchmarks"
 			],
 			"default": "quickstart"
@@ -90,6 +91,12 @@
 				"showReuseMessage": true,
 				"clear": false
 			}
+		},
+		{
+			"label": "🧪 Compile and Run Tests",
+			"type": "shell",
+			"command": "cmake --build build -j && ./build/akasha_tests",
+			"group": "test"
 		}
 	]
 }

@@ -21,7 +21,7 @@ int main() {
 	
 	// Load dataset 1: application config
 	std::cout << "Loading dataset 'app' from " << app_file << "...\n";
-	auto status1 = store.load("app", app_file, true);
+	auto status1 = store.load("app", app_file, akasha::FileOptions::create_if_missing);
 	if (status1 != akasha::Status::ok) {
 		std::cerr << "Failed to load 'app' dataset\n";
 		return 1;
@@ -30,7 +30,7 @@ int main() {
 	
 	// Load dataset 2: user config
 	std::cout << "Loading dataset 'user' from " << user_file << "...\n";
-	auto status2 = store.load("user", user_file, true);
+	auto status2 = store.load("user", user_file, akasha::FileOptions::create_if_missing);
 	if (status2 != akasha::Status::ok) {
 		std::cerr << "Failed to load 'user' dataset\n";
 		return 1;
@@ -39,7 +39,7 @@ int main() {
 	
 	// Try to reload 'app' dataset (should fail with source_already_loaded)
 	std::cout << "Attempting to reload 'app' dataset (should fail):\n";
-	auto status3 = store.load("app", app_file, true);
+	auto status3 = store.load("app", app_file, akasha::FileOptions::create_if_missing);
 	std::cout << "  Status: " << (status3 == akasha::Status::source_already_loaded 
 		? "source_already_loaded ✓" : "unexpected") << "\n\n";
 	
