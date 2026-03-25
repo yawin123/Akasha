@@ -41,10 +41,22 @@ namespace akasha {
  */
 using KeyPath = std::string;
 
+// Helper: detect if T is std::vector<U> where U is trivially copyable (but not bool, handled separately)
+template<typename T>
+struct is_trivially_copyable_vector : std::false_type {};
+
+template<typename T>
+struct is_trivially_copyable_vector<std::vector<T>> 
+	: std::bool_constant<std::is_trivially_copyable_v<T> && !std::is_same_v<T, bool>> {};
+
+template<typename T>
+static constexpr bool is_trivially_copyable_vector_v = is_trivially_copyable_vector<T>::value;
+
 /** @brief Result of any operation (load, write, etc). */
 enum class Status {
 	ok,
 	invalid_key_path,      // Empty key or invalid format
+	invalid_file_path,	   // File path is invalid (e.g. directory, invalid characters)
 	key_conflict,          // Conflict in hierarchical structure
 	file_read_error,       // Error reading memory-mapped file
 	file_write_error,      // Error writing to file
@@ -52,8 +64,40 @@ enum class Status {
 	file_full,             // File full after growth retry attempts
 	parse_error,           // Error parsing internal data
 	dataset_not_found,     // Dataset (first segment) does not exist
+	key_not_found,         // Key (full path) does not exist
 	source_already_loaded, // Dataset already loaded
+	incompatible_format,   // File format version incompatible with this library version
 };
+
+/** @brief Options for file operations. */
+enum class FileOptions {
+	none = 0,
+	create_if_missing = 1, // Create the file if it does not exist (only for load)
+	migrate_if_incompatible = 2, // If format version is incompatible, attempt to migrate (not implemented yet)
+};
+
+// Bitwise operators for FileOptions enum class
+inline FileOptions operator|(FileOptions lhs, FileOptions rhs) {
+	return static_cast<FileOptions>(static_cast<int>(lhs) | static_cast<int>(rhs));
+}
+
+inline FileOptions operator&(FileOptions lhs, FileOptions rhs) {
+	return static_cast<FileOptions>(static_cast<int>(lhs) & static_cast<int>(rhs));
+}
+
+inline FileOptions operator~(FileOptions x) {
+	return static_cast<FileOptions>(~static_cast<int>(x));
+}
+
+inline FileOptions& operator|=(FileOptions& lhs, FileOptions rhs) {
+	lhs = lhs | rhs;
+	return lhs;
+}
+
+inline FileOptions& operator&=(FileOptions& lhs, FileOptions rhs) {
+	lhs = lhs & rhs;
+	return lhs;
+}
 
 struct PerformanceTuning {
 	std::size_t initial_mapped_file_size{64 * 1024};
@@ -70,10 +114,12 @@ struct PerformanceTuning {
  */
 class Store {
 private:
-	struct MappedFileStorage;
 	struct Source;
 
 public:
+	// Forward declaration - inherent implementation detail
+	struct MappedFileStorage;
+
 	/**
 	 * @brief Read-only view of an intermediate node in the tree.
 	 *
@@ -112,9 +158,13 @@ public:
 				full_key += key_path;
 			}
 
-			// If T is DatasetView, return a view
+			// If T is DatasetView, validate and return a view via Store::get_dataset_view()
 			if constexpr (std::is_same_v<T, DatasetView>) {
-				return DatasetView(source_, full_key);
+				if (source_->store == nullptr) {
+					return std::nullopt;
+				}
+				// Delegate to Store::get_dataset_view() which validates the path exists
+				return source_->store->get_dataset_view(full_key);
 			} else {
 			// For other types T, access the Store backend
 				if (source_->store == nullptr) {
@@ -168,7 +218,7 @@ public:
 	[[nodiscard]] Status load(
 		std::string_view source_id,
 		std::string_view file_path,
-		bool create_if_missing = false
+		FileOptions options = FileOptions::none
 	);
 
 	/**
@@ -188,6 +238,12 @@ public:
 	 * Specialization for trivially copyable types:
 	 * Example: set<int64_t>("user.core.timeout", 90)
 	 * 
+	 * Specialization for std::vector<T> where T is trivially copyable:
+	 * Example: set<std::vector<int>>("sensors.readings", {1, 2, 3})
+	 * 
+	 * Specialization for std::vector<bool> (serialized as byte array):
+	 * Example: set<std::vector<bool>>("flags.state", {true, false, true})
+	 * 
 	 * Specialization for DatasetView:
 	 * Copy the entire subtree to the new location, deleting destination if it exists.
 	 * Example: set<DatasetView>("backup.servers", view_of_servers)
@@ -197,9 +253,63 @@ public:
 		if constexpr (std::is_same_v<T, DatasetView>) {
 			// Special override for DatasetView: copy subtree
 			return set_datasetview_impl(key_path, value);
+		} else if constexpr (std::is_same_v<T, std::vector<bool>>) {
+			// Specialization for std::vector<bool> (special case, no .data() method)
+			// Format: [size_t count][uint8_t elem0][uint8_t elem1]...[uint8_t elemN]
+			// Each bool serialized as one byte (0 or 1)
+			std::vector<char> buffer;
+			std::size_t count = value.size();
+			
+			// Serialize count
+			const char* count_bytes = reinterpret_cast<const char*>(&count);
+			buffer.insert(buffer.end(), count_bytes, count_bytes + sizeof(std::size_t));
+			
+			// Serialize each bool as one byte
+			for (bool elem : value) {
+				buffer.push_back(static_cast<char>(elem ? 1 : 0));
+			}
+			
+			return set_bytes_impl(key_path, buffer.data(), buffer.size());
+		} else if constexpr (is_trivially_copyable_vector_v<T>) {
+			// Specialization for std::vector<U> where U is trivially copyable
+			// Format: [size_t count][U elem0][U elem1]...[U elemN]
+			using elem_type = typename T::value_type;
+			std::vector<char> buffer;
+			std::size_t count = value.size();
+			
+			// Serialize count
+			const char* count_bytes = reinterpret_cast<const char*>(&count);
+			buffer.insert(buffer.end(), count_bytes, count_bytes + sizeof(std::size_t));
+			
+			// Serialize elements with memcpy
+			if (count > 0) {
+				const char* elem_bytes = reinterpret_cast<const char*>(value.data());
+				buffer.insert(buffer.end(), elem_bytes, elem_bytes + count * sizeof(elem_type));
+			}
+			
+			return set_bytes_impl(key_path, buffer.data(), buffer.size());
+		} else if constexpr (std::is_same_v<T, std::vector<std::string>>) {
+			// Specialization for std::vector<std::string>
+			// Format: [size_t count][size_t len0][chars0...][size_t len1][chars1...]...
+			std::vector<char> buffer;
+			std::size_t count = value.size();
+			
+			// Serialize count
+			const char* count_bytes = reinterpret_cast<const char*>(&count);
+			buffer.insert(buffer.end(), count_bytes, count_bytes + sizeof(std::size_t));
+			
+			// Serialize each string
+			for (const auto& str : value) {
+				std::size_t len = str.size();
+				const char* len_bytes = reinterpret_cast<const char*>(&len);
+				buffer.insert(buffer.end(), len_bytes, len_bytes + sizeof(std::size_t));
+				buffer.insert(buffer.end(), str.begin(), str.end());
+			}
+			
+			return set_bytes_impl(key_path, buffer.data(), buffer.size());
 		} else {
 			static_assert(std::is_trivially_copyable_v<T>, 
-				"Type T must be trivially copyable for akasha::Store::set<T>");
+				"Type T must be trivially copyable (or std::vector<U> with trivially copyable U) for akasha::Store::set<T>");
 			
 			const char* bytes = reinterpret_cast<const char*>(&value);
 			return set_bytes_impl(key_path, bytes, sizeof(T));
@@ -256,18 +366,110 @@ public:
 		// If T is DatasetView, return a view
 		if constexpr (std::is_same_v<T, DatasetView>) {
 			return get_dataset_view(key_path);
-		} else {
-			static_assert(std::is_trivially_copyable_v<T>, 
-				"Type T must be trivially copyable for akasha::Store::get<T>");
-			
-			// Read generic bytes and interpret as T
-			auto bytes = get_bytes_impl(key_path, sizeof(T));
-			if (!bytes.has_value()) {
+		} else if constexpr (std::is_same_v<T, std::vector<bool>>) {
+			// Specialization for std::vector<bool> (special case, stored as byte array)
+			// Format: [size_t count][uint8_t elem0][uint8_t elem1]...[uint8_t elemN]
+			auto view = get_bytes_impl(key_path);
+			if (!view.has_value() || view->size() < sizeof(std::size_t)) {
 				return std::nullopt;
 			}
 			
-			// Reinterpret bytes as T
-			return *reinterpret_cast<const T*>(bytes->data());
+			// Read the count
+			std::size_t count = *reinterpret_cast<const std::size_t*>(view->data());
+			
+			// Verify that the size is consistent
+			if (view->size() != sizeof(std::size_t) + count) {
+				return std::nullopt;
+			}
+			
+			if (count == 0) {
+				return std::vector<bool>();
+			}
+			
+			// Deserialize elements: each byte becomes a bool
+			std::vector<bool> result;
+			const char* data = view->data() + sizeof(std::size_t);
+			for (std::size_t i = 0; i < count; ++i) {
+				result.push_back(data[i] != 0);
+			}
+			return result;
+		} else if constexpr (std::is_same_v<T, std::vector<std::string>>) {
+			// Specialization for std::vector<std::string>
+			// Format: [size_t count][size_t len0][chars0...][size_t len1][chars1...]...
+			auto view = get_bytes_impl(key_path);
+			if (!view.has_value() || view->size() < sizeof(std::size_t)) {
+				return std::nullopt;
+			}
+			
+			// Read the count
+			std::size_t count = *reinterpret_cast<const std::size_t*>(view->data());
+			
+			if (count == 0) {
+				return std::vector<std::string>();
+			}
+			
+			// Deserialize each string
+			std::vector<std::string> result;
+			std::size_t offset = sizeof(std::size_t);
+			const char* data = view->data();
+			
+			for (std::size_t i = 0; i < count; ++i) {
+				// Check if we can read the length
+				if (offset + sizeof(std::size_t) > view->size()) {
+					return std::nullopt;
+				}
+				
+				// Read string length
+				std::size_t len = *reinterpret_cast<const std::size_t*>(data + offset);
+				offset += sizeof(std::size_t);
+				
+				// Check if we can read the string data
+				if (offset + len > view->size()) {
+					return std::nullopt;
+				}
+				
+				// Create string from bytes
+				result.push_back(std::string(data + offset, data + offset + len));
+				offset += len;
+			}
+			
+			return result;
+		} else if constexpr (is_trivially_copyable_vector_v<T>) {
+			// Specialization for std::vector<U> where U is trivially copyable
+			// Format: [size_t count][U elem0][U elem1]...[U elemN]
+			using elem_type = typename T::value_type;
+			auto view = get_bytes_impl(key_path);
+			if (!view.has_value() || view->size() < sizeof(std::size_t)) {
+				return std::nullopt;
+			}
+			
+			// Read the count
+			std::size_t count = *reinterpret_cast<const std::size_t*>(view->data());
+			
+			// Verify that the size is consistent
+			if (view->size() != sizeof(std::size_t) + count * sizeof(elem_type)) {
+				return std::nullopt;
+			}
+			
+			if (count == 0) {
+				return T();
+			}
+			
+			// Deserialize elements: create vector from raw bytes
+			const elem_type* elem_ptr = reinterpret_cast<const elem_type*>(view->data() + sizeof(std::size_t));
+			return T(elem_ptr, elem_ptr + count);
+		} else {
+			static_assert(std::is_trivially_copyable_v<T>, 
+				"Type T must be trivially copyable (or std::vector<U> with trivially copyable U) for akasha::Store::get<T>");
+			
+			// Use view-based read to avoid unnecessary copy from mmap
+			auto view = get_bytes_impl(key_path);
+			if (!view.has_value() || view->size() != sizeof(T)) {
+				return std::nullopt;
+			}
+			
+			// Reinterpret bytes as T (no copy)
+			return *reinterpret_cast<const T*>(view->data());
 		}
 	}
 
@@ -311,17 +513,28 @@ private:
 		Store* store{nullptr};
 	};
 
-	[[nodiscard]] static bool split_key_path(std::string_view key_path, std::vector<std::string_view>& segments);
 	[[nodiscard]] Source* find_source(std::string_view source_id);
 	[[nodiscard]] const Source* find_source(std::string_view source_id) const;
 	[[nodiscard]] std::optional<DatasetView> get_dataset_view(std::string_view key_path) const;
 	[[nodiscard]] Status set_bytes_impl(std::string_view key_path, const void* bytes, std::size_t size);
 	[[nodiscard]] Status set_datasetview_impl(std::string_view key_path, const DatasetView& view);
-	[[nodiscard]] std::optional<std::vector<char>> get_bytes_impl(std::string_view key_path, std::size_t expected_size) const;
+	[[nodiscard]] std::optional<std::string_view> get_bytes_impl(std::string_view key_path) const;
 	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
 	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
 	[[nodiscard]] bool shrink_and_remap_sources_for_path(const std::string& file_path);
 	[[nodiscard]] bool compact_and_remap_sources_for_path(const std::string& file_path);
+	[[nodiscard]] std::optional<std::vector<std::size_t>> prepare_remap(const std::string& file_path);
+
+	struct SourceSnapshot {
+		std::vector<std::pair<std::string, std::string>> entries;
+		uint32_t version = 0;
+		std::size_t data_size = 0;
+	};
+	[[nodiscard]] std::optional<SourceSnapshot> extract_source_snapshot(const std::string& file_path) const;
+	[[nodiscard]] bool rebuild_file_from_snapshot(const std::string& file_path, const SourceSnapshot& snapshot);
+	[[nodiscard]] bool find_and_cleanup_sources_for_path(const std::string& file_path, std::vector<std::size_t>& affected_indexes);
+	[[nodiscard]] bool reload_sources_for_path(const std::string& file_path, const std::vector<std::size_t>& affected_indexes, bool use_construct);
+	[[nodiscard]] Status migrate(std::shared_ptr<MappedFileStorage>& storage, uint32_t current_version);
 
 	std::vector<Source> sources_;
 	mutable std::shared_mutex sources_mutex_;
@@ -357,26 +570,24 @@ inline akasha::Status Store::set<std::string>(std::string_view key_path, const s
  */
 template<>
 inline std::optional<std::string> Store::get<std::string>(std::string_view key_path) const {
-	// We need at least sizeof(size_t) for the length
-	auto bytes = get_bytes_impl(key_path, sizeof(std::size_t));
-	if (!bytes.has_value() || bytes->size() < sizeof(std::size_t)) {
+	auto view = get_bytes_impl(key_path);
+	if (!view.has_value() || view->size() < sizeof(std::size_t)) {
 		return std::nullopt;
 	}
 	
 	// Read the length
-	std::size_t len = *reinterpret_cast<const std::size_t*>(bytes->data());
+	std::size_t len = *reinterpret_cast<const std::size_t*>(view->data());
 	
 	// Verify that the size is consistent
-	if (bytes->size() != sizeof(std::size_t) + len) {
+	if (view->size() != sizeof(std::size_t) + len) {
 		return std::nullopt;
 	}
 	
-	// Rebuild the string from the bytes
 	if (len == 0) {
 		return std::string();
 	}
 	
-	return std::string(bytes->data() + sizeof(std::size_t), bytes->data() + bytes->size());
+	return std::string(view->data() + sizeof(std::size_t), view->data() + view->size());
 }
 
 /**

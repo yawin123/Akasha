@@ -7,7 +7,7 @@ int main() {
     Store store;
     
     // Load configuration
-    auto status = store.load("config", "/tmp/datasetview_example.db", true);
+    auto status = store.load("config", "/tmp/datasetview_example.db", akasha::FileOptions::create_if_missing);
     if (status != Status::ok) {
         std::cerr << "Error loading config\n";
         return 1;
@@ -137,7 +137,7 @@ int main() {
     std::cout << "7. Cloning entire configuration:\n";
     
     // First, load the destination dataset
-    auto clone_load_status = store.load("config_clone", "/tmp/datasetview_clone.db", true);
+    auto clone_load_status = store.load("config_clone", "/tmp/datasetview_clone.db", akasha::FileOptions::create_if_missing);
     if (clone_load_status != Status::ok) {
         std::cout << "   ERROR: Could not load clone dataset\n";
     } else {
@@ -171,7 +171,7 @@ int main() {
     std::cout << "8. Using getorset<DatasetView> with defaults:\n";
     
     // First, create a defaults dataset
-    auto defaults_status = store.load("defaults", "/tmp/datasetview_defaults.db", true);
+    auto defaults_status = store.load("defaults", "/tmp/datasetview_defaults.db", akasha::FileOptions::create_if_missing);
     if (defaults_status == Status::ok) {
         // Set default values for a new service
         (void)store.set<int32_t>("defaults.cache.ttl", 1800);

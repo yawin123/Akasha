@@ -127,6 +127,7 @@ Full documentation in [include/akasha.hpp](include/akasha.hpp).
 
 - Scalars: `bool`, `char`, `int32_t`, `uint32_t`, `int64_t`, `uint64_t`, `double`, `float`
 - Strings: `std::string`
+- Collections: `std::vector<T>` for any copyable or memcpy-serializable type, including vectors of strings
 - Structs: Any `trivially_copyable` type
 
 ### Status Enum
@@ -207,17 +208,28 @@ All examples compile with `cmake --build build` and run from `./build/akasha_*`.
 
 ## Performance Benchmarks
 
-Results measured on Intel i7-13700K, Ubuntu 22.04 LTS. Run with `./build/akasha_benchmarks`.
+Results from 60 benchmark runs on Intel i7-13700K, Ubuntu 22.04 LTS. Run with `./build/akasha_benchmarks`.
 
-| Operation | Throughput | Notes |
-|-----------|-----------|-------|
-| Load empty dataset | 13,717 ops/sec | File creation overhead |
-| Write scalar (int64) | 848K / 803K ops/sec | 1K and 10K keys |
-| Read scalar (int64) | 3.8M / 3.1M ops/sec | mmap page-cache hit |
-| Write string | 539K / 546K ops/sec | Serialized as [length][chars] |
-| Read string | 3.6M / 2.9M ops/sec | Deserialized from mmap |
-| Write struct | 601K / 607K ops/sec | trivially_copyable types |
-| Read struct | 3.8M / 3.0M ops/sec | Consistent with scalar |
-| Compact (50% deleted) | 7.3K / 4.3K ops/sec | 5K and 10K keys |
+| Operation | Average | Best | Worst | Notes |
+|-----------|---------|------|-------|-------|
+| Load empty dataset | 14,161 ops/sec | 18,148 | 9,206 | File creation overhead |
+| Write scalar (1K keys) | 932K ops/sec | 965K | 786K | 1000 int64 writes |
+| Write scalar (10K keys) | 883K ops/sec | 907K | 845K | 10000 int64 writes |
+| Read scalar (1K keys) | 5.3M ops/sec | 5.7M | 4.1M | mmap page-cache hit |
+| Read scalar (10K keys) | 4.5M ops/sec | 4.7M | 4.0M | mmap page-cache hit |
+| Write string (1K keys) | 574K ops/sec | 610K | 518K | Serialized as [length][chars] |
+| Write string (10K keys) | 580K ops/sec | 599K | 456K | Serialized as [length][chars] |
+| Read string (1K keys) | 4.9M ops/sec | 5.3M | 3.4M | Deserialized from mmap |
+| Read string (10K keys) | 3.9M ops/sec | 4.2M | 3.0M | Deserialized from mmap |
+| Write struct (1K keys) | 630K ops/sec | 666K | 463K | trivially_copyable types |
+| Write struct (10K keys) | 628K ops/sec | 665K | 412K | trivially_copyable types |
+| Read struct (1K keys) | 5.2M ops/sec | 5.6M | 3.8M | Consistent with scalar |
+| Read struct (10K keys) | 4.2M ops/sec | 4.4M | 2.8M | Consistent with scalar |
+| Compact (5K keys, 50% deleted) | 1,026 ops/sec | 1,102 | 671 | extract→delete→recreate |
+| Compact (10K keys, 50% deleted) | 568 ops/sec | 609 | 479 | extract→delete→recreate |
 
-**Key insight:** Reads are **5-7x faster** than writes — mmap page-cache hits avoid system call overhead on repeated reads.
+**Key insights:**
+- Reads are **5-7x faster** than writes — mmap page-cache hits avoid system call overhead
+- Write performance is consistent (σ < 10%) across runs
+- Read performance shows larger variance (σ ≈ 15-20%) due to system scheduling and cache state
+- The `compact()` operation uses extract→delete→recreate to truly eliminate Boost.Interprocess internal fragmentation, ensuring optimal data locality for subsequent operations
