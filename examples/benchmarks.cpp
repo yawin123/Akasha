@@ -32,7 +32,7 @@ BenchmarkResult benchmark_load(const std::string& path) {
     
     auto start = std::chrono::high_resolution_clock::now();
     akasha::Store store;
-    (void)store.load("bench", path, true);
+    (void)store.load("bench", path, akasha::FileOptions::create_if_missing);
     auto end = std::chrono::high_resolution_clock::now();
     
     auto duration = std::chrono::duration<double, std::milli>(end - start).count();
@@ -46,7 +46,7 @@ BenchmarkResult benchmark_load(const std::string& path) {
 BenchmarkResult benchmark_write_scalar(size_t count) {
     fs::remove("/tmp/bench_scalar.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_scalar.db", true);
+    (void)store.load("bench", "/tmp/bench_scalar.db", akasha::FileOptions::create_if_missing);
     
     auto start = std::chrono::high_resolution_clock::now();
     
@@ -66,7 +66,7 @@ BenchmarkResult benchmark_write_scalar(size_t count) {
 BenchmarkResult benchmark_read_scalar(size_t count) {
     fs::remove("/tmp/bench_scalar.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_scalar.db", true);
+    (void)store.load("bench", "/tmp/bench_scalar.db", akasha::FileOptions::create_if_missing);
     
     // Pre-populate
     for (size_t i = 0; i < count; ++i) {
@@ -93,7 +93,7 @@ BenchmarkResult benchmark_read_scalar(size_t count) {
 BenchmarkResult benchmark_write_string(size_t count) {
     fs::remove("/tmp/bench_string.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_string.db", true);
+    (void)store.load("bench", "/tmp/bench_string.db", akasha::FileOptions::create_if_missing);
     
     auto start = std::chrono::high_resolution_clock::now();
     
@@ -114,7 +114,7 @@ BenchmarkResult benchmark_write_string(size_t count) {
 BenchmarkResult benchmark_read_string(size_t count) {
     fs::remove("/tmp/bench_string.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_string.db", true);
+    (void)store.load("bench", "/tmp/bench_string.db", akasha::FileOptions::create_if_missing);
     
     // Pre-populate
     for (size_t i = 0; i < count; ++i) {
@@ -144,7 +144,7 @@ struct Point { double x, y, z; };
 BenchmarkResult benchmark_write_struct(size_t count) {
     fs::remove("/tmp/bench_struct.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_struct.db", true);
+    (void)store.load("bench", "/tmp/bench_struct.db", akasha::FileOptions::create_if_missing);
     
     auto start = std::chrono::high_resolution_clock::now();
     
@@ -165,7 +165,7 @@ BenchmarkResult benchmark_write_struct(size_t count) {
 BenchmarkResult benchmark_read_struct(size_t count) {
     fs::remove("/tmp/bench_struct.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_struct.db", true);
+    (void)store.load("bench", "/tmp/bench_struct.db", akasha::FileOptions::create_if_missing);
     
     // Pre-populate
     for (size_t i = 0; i < count; ++i) {
@@ -193,7 +193,7 @@ BenchmarkResult benchmark_read_struct(size_t count) {
 BenchmarkResult benchmark_compact(size_t count) {
     fs::remove("/tmp/bench_compact.db");
     akasha::Store store;
-    (void)store.load("bench", "/tmp/bench_compact.db", true);
+    (void)store.load("bench", "/tmp/bench_compact.db", akasha::FileOptions::create_if_missing);
     
     // Write data
     for (size_t i = 0; i < count; ++i) {

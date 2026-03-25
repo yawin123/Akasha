@@ -4,6 +4,7 @@ project(Akasha VERSION 1.0.0 LANGUAGES CXX)
 
 # Options can be set from CMake or from Conan
 option(BUILD_EXAMPLE "Build example application" OFF)
+option(BUILD_TESTS "Build test suite" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
 
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
@@ -76,8 +77,28 @@ if(BUILD_EXAMPLE)
     add_executable(akasha_datasetview examples/datasetview.cpp)
     target_link_libraries(akasha_datasetview PRIVATE akasha::akasha)
     
+    # 9. Vectors: storing and retrieving std::vector<T> of scalar types
+    add_executable(akasha_vectors examples/vectors.cpp)
+    target_link_libraries(akasha_vectors PRIVATE akasha::akasha)
+    
+    # 10. Compaction: demonstrating defragmentation and space reclamation
+    add_executable(akasha_compaction examples/compaction.cpp)
+    target_link_libraries(akasha_compaction PRIVATE akasha::akasha)
+    
+    # 11. Performance Tuning: configuring file growth and memory allocation parameters
+    add_executable(akasha_performance_tuning examples/performance_tuning.cpp)
+    target_link_libraries(akasha_performance_tuning PRIVATE akasha::akasha)
+    
     # Reset BUILD_EXAMPLE to OFF after processing so next build doesn't compile examples
     set(BUILD_EXAMPLE OFF CACHE BOOL "Build example application" FORCE)
+endif()
+
+if(BUILD_TESTS)
+    # Test suite (header-only framework, no external dependencies)
+    # All test files are included from basic_tests.cpp to ensure proper initialization
+    add_executable(akasha_tests tests/basic_tests.cpp)
+    target_link_libraries(akasha_tests PRIVATE akasha::akasha)
+    target_include_directories(akasha_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)

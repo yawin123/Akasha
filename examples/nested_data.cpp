@@ -53,7 +53,7 @@ int main() {
 	
 	// Load dataset
 	std::string file_path = "/tmp/akasha_nested.db";
-	auto status = store.load("profiles", file_path, true);
+	auto status = store.load("profiles", file_path, akasha::FileOptions::create_if_missing);
 	if (status != akasha::Status::ok) {
 		std::cerr << "Failed to load dataset\n";
 		return 1;

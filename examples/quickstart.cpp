@@ -3,9 +3,16 @@
 
 int main() {
     akasha::Store store;
+
+    auto tmp_status = store.load("config", "/tmp/config.data", akasha::FileOptions::create_if_missing | akasha::FileOptions::migrate_if_incompatible);
+    if (tmp_status != akasha::Status::ok) {
+        std::cerr << "Error loading config: " << static_cast<int>(tmp_status) << '\n';
+        return 1;
+    }
+    (void)store.unload("config");
     
     // Load a file (created if it doesn't exist)
-    auto status = store.load("config", "/tmp/myconfig.db", true);
+    auto status = store.load("config", "/tmp/myconfig.db", akasha::FileOptions::create_if_missing | akasha::FileOptions::migrate_if_incompatible);
     if (status != akasha::Status::ok) {
         std::cerr << "Error loading config: " << static_cast<int>(status) << '\n';
         return 1;

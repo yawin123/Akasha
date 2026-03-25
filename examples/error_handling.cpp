@@ -41,14 +41,14 @@ int main() {
     
     // Try to load a non-existent file without create_if_missing
     std::cout << "Loading non-existent file without create flag:\n";
-    auto status = store.load("config", "/tmp/nonexistent.db", false);
+    auto status = store.load("config", "/tmp/nonexistent.db", akasha::FileOptions::none);
     print_status(status);
     std::cout << "Last status: ";
     print_status(store.last_status());
     
     // Load correctly
     std::cout << "\nLoading (with create flag):\n";
-    status = store.load("config", "/tmp/error_test.db", true);
+    status = store.load("config", "/tmp/error_test.db", akasha::FileOptions::create_if_missing);
     print_status(status);
     
     // Invalid key (no dataset)
@@ -67,7 +67,7 @@ int main() {
     
     // Try to load same dataset twice
     std::cout << "\nLoading same dataset twice:\n";
-    status = store.load("config", "/tmp/another.db", true);
+    status = store.load("config", "/tmp/another.db", akasha::FileOptions::create_if_missing);
     print_status(status);
     std::cout << "Last status: ";
     print_status(store.last_status());

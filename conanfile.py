@@ -27,7 +27,8 @@ class AkashaConan(ConanFile):
         self.requires("boost/1.90.0")
     
     def layout(self):
-        cmake_layout(self)
+        # Keep generators in root of output folder (which is build/)
+        self.folders.generators = ""
     
     def build(self):
         cmake = CMake(self)

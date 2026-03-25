@@ -49,7 +49,7 @@ int main() {
 	
 	// Load and create nested data structure
 	std::string file_path = "/tmp/akasha_navigation.db";
-	auto status = store.load("settings", file_path, true);
+	auto status = store.load("settings", file_path, akasha::FileOptions::create_if_missing);
 	if (status != akasha::Status::ok) {
 		std::cerr << "Failed to load settings\n";
 		return 1;
