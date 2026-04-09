@@ -1,476 +1,993 @@
-# Akasha API Reference
+# Akasha 2.0.0 — Complete API Reference
 
-Complete guide to the Akasha 1.0.0 API.
+Comprehensive guide to the Akasha library: a hierarchical key-value store with persistence in memory-mapped files (mmap).
 
-## Basic Concepts
+---
 
-**Store**: Main object that manages multiple datasets mapped to persistent memory-mapped files.
+## Table of Contents
 
-**Dataset**: Independent set of data identified by `source_id`. Each dataset occupies a separate memory-mapped file.
+1. [Quick Start](#quick-start)
+2. [Fundamental Concepts](#fundamental-concepts)
+3. [Inclusion and Version](#inclusion-and-version)
+4. [Store — Lifecycle](#store--lifecycle)
+5. [Store — Data Operations](#store--data-operations)
+6. [Supported Types and Conversions](#supported-types-and-conversions)
+7. [DatasetView — Hierarchical Navigation](#datasetview--hierarchical-navigation)
+8. [Custom Types — Serializable\<T\>](#custom-types--serializablet)
+9. [Sequential Containers — SequentialSerializable\<T\>](#sequential-containers--sequentialserializablet)
+10. [Arbitrary Containers — ArbitrarySerializable\<T\>](#arbitrary-containers--arbitraryserializablet)
+11. [std::vector\<T\> — Built-in Support](#stdvectort--built-in-support)
+12. [BatchWriter and BatchReader](#batchwriter-and-batchreader)
+13. [Status — Error Codes](#status--error-codes)
+14. [FileOptions — Load Options](#fileoptions--load-options)
+15. [PerformanceTuning — Performance Tuning](#performancetuning--performance-tuning)
+16. [Internal Binary Format](#internal-binary-format)
+17. [Thread Safety and Concurrency](#thread-safety-and-concurrency)
+18. [Edge Cases and Robustness](#edge-cases-and-robustness)
+19. [Compilation and Integration](#compilation-and-integration)
 
-**KeyPath**: Hierarchical path in dot notation. Minimum 1 segment. 
-> Examples: `"counter"`, `"config.timeout"`, `"settings.subsection.property"`
+---
 
-**Status**: Enum with 10 error codes indicating the result of any operation.
-
-## Typical Lifecycle
-
-```cpp
-akasha::Store store;
-
-// 1. Load a dataset
-auto status = store.load("config", "/path/to/config.dat", true);
-if (status != akasha::Status::ok) {
-    std::cerr << "Error loading: " << static_cast<int>(status) << std::endl;
-}
-
-// 2. Set values
-store.set<int64_t>("config.timeout", 30);
-store.set<std::string>("config.name", "MyApp");
-
-// 3. Read values
-auto timeout = store.get<int64_t>("config.timeout");
-if (timeout.has_value()) {
-    std::cout << "Timeout: " << *timeout << std::endl;
-}
-
-// 4. Clear dataset
-store.clear("config");
-
-// 5. Unload
-store.unload("config");
-```
-
-## Store Methods
-
-### `load(source_id, file_path, create_if_missing = false)`
-
-Load a dataset from a memory-mapped file.
+## Quick Start
 
 ```cpp
-Status status = store.load("db", "/path/to/data.db", false);
+#include "akasha.hpp"
+#include <iostream>
+
+int main() {
+    akasha::Store store;
+
+    // 1. Load a dataset (creates file if missing)
+    auto status = store.load("config", "/tmp/config.db",
+                             akasha::FileOptions::create_if_missing);
+    if (status != akasha::Status::ok) return 1;
+
+    // 2. Write typed values
+    store.set<int64_t>("config/timeout", 30);
+    store.set<bool>("config/debug", true);
+    store.set<std::string>("config/name", "MyApp");
+
+    // 3. Read values
+    auto timeout = store.get<int64_t>("config/timeout");
+    if (timeout) std::cout << "Timeout: " << *timeout << "\n";
+
+    // 4. Lazy initialization (getorset)
+    auto retries = store.getorset<int64_t>("config/max_retries", 5);
+
+    // 5. Navigate subnodes
+    auto view = store.get<akasha::Store::DatasetView>("config");
+    if (view) {
+        for (const auto& key : view->keys())
+            std::cout << "  " << key << "\n";
+    }
+
+    // 6. Unload
+    store.unload("config");
+}
 ```
 
-- `source_id`: Unique dataset identifier (e.g., "config", "user", "cache").
-- `file_path`: Absolute or relative path to the file.
-- `create_if_missing`: If true, creates an empty file if it doesn't exist.
+---
+
+## Fundamental Concepts
+
+| Concept | Description |
+|---|---|
+| **Store** | Main object. Manages multiple datasets associated with memory-mapped files. |
+| **Dataset** | Independent data set identified by a `source_id`. Each dataset occupies a separate `.db` file. |
+| **KeyPath** | Hierarchical path with `/` separator. The first segment is always the dataset's `source_id`. Ex: `"config/server/port"`. |
+| **DatasetView** | Read-only view over an intermediate tree node. Allows relative navigation without reconstructing full paths. |
+| **BatchWriter / BatchReader** | Transactional interfaces for bulk write/read. Used internally to serialize custom types. |
+
+### Path Format (KeyPath)
+
+Paths use `/` as separator. The first segment identifies the dataset:
+
+```
+"config/server/port"
+ ^^^^^^ ^^^^^^^^^^^
+ dataset    subkey
+```
+
+- **`"config"`**: root of dataset `config`.
+- **`"config/server"`**: intermediate node `server` within `config`.
+- **`"config/server/port"`**: leaf `port` within `server`.
+
+---
+
+## Inclusion and Version
+
+```cpp
+#include "akasha.hpp"  // Includes entire library
+```
+
+This umbrella header includes (in dependency order):
+
+1. `akasha/core.hpp` — Fundamental types (`Status`, `FileOptions`, `PerformanceTuning`, traits)
+2. `akasha/store.hpp` — `Store` class and `DatasetView`
+3. `akasha/batch.hpp` — `BatchWriter` and `BatchReader`
+4. `akasha/detail/store_serializable.hpp` — Support for custom types
+5. `akasha/detail/stl_serialization.hpp` — Support for STL containers (`std::vector`, `std::list`, `std::set`, `std::unordered_set`, `std::array`, `std::map`, `std::unordered_map`)
+
+### Version
+
+```cpp
+std::string_view v = akasha::version();  // "2.0.0"
+```
+
+Returns the semantic version defined by the `AKASHA_VERSION` macro at compilation.
+
+---
+
+## Store — Lifecycle
+
+### `load(source_id, file_path, options)`
+
+Loads a dataset from a memory-mapped file.
+
+```cpp
+auto status = store.load("db", "/path/to/data.db",
+                         akasha::FileOptions::create_if_missing |
+                         akasha::FileOptions::migrate_if_incompatible);
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `string_view` | Unique dataset identifier (e.g., `"config"`, `"cache"`). |
+| `file_path` | `string_view` | Path to the persistence file. |
+| `options` | `FileOptions` | Behavior flags (see [FileOptions](#fileoptions--load-options)). Default: `FileOptions::none`. |
 
 **Possible errors:**
-- `source_already_loaded`: Dataset is already loaded.
-- `file_not_found`: File doesn't exist and `create_if_missing=false`.
-- `file_read_error`: Error reading the file.
-- `parse_error`: Corrupted internal data.
+
+| Status | Cause |
+|---|---|
+| `source_already_loaded` | A dataset with that `source_id` already exists. |
+| `file_not_found` | File does not exist and `create_if_missing` was not used. |
+| `invalid_file_path` | The file path is not valid. |
+| `file_read_error` | Error opening/reading the file. |
+| `parse_error` | Internal data is corrupted. |
+| `incompatible_format` | Incompatible file format and `migrate_if_incompatible` was not used. |
 
 ### `unload(source_id)`
 
-Unload a dataset and close its memory-mapped file.
+Unloads a dataset and closes its memory-mapped file.
 
 ```cpp
-Status status = store.unload("db");
+auto status = store.unload("db");
 ```
 
-Data persists on disk but is no longer accessible from this Store instance.
+Data persists on disk but is no longer accessible from this `Store` instance.
 
-### `set<T>(key_path, value)`
+**Possible errors:** `dataset_not_found`.
 
-Set a typed value at a key.
+---
+
+## Store — Data Operations
+
+### `set<T>(key_path, value)` — Write
+
+Sets a typed value at a key. The write is persisted immediately to the memory-mapped file.
 
 ```cpp
-store.set<int64_t>("config.retries", 3);
-store.set<double>("config.threshold", 0.95);
-store.set<std::string>("config.version", "1.0");
+store.set<int64_t>("config/retries", 3);
+store.set<double>("config/threshold", 0.95);
+store.set<bool>("config/verbose", true);
+store.set<std::string>("config/version", "2.0.0");
 ```
 
-The value is persisted immediately to the memory-mapped file.
+All overloads return `[[nodiscard]] Status`. You must always check the result:
 
-**Supported types:**
-- Scalars: bool, int8_t, int16_t, int32_t, int64_t, uint8_t, uint16_t, uint32_t, uint64_t, float, double
-- Strings: std::string (serialized as [length][data])
-- Custom trivially_copyable structures
+```cpp
+if (store.set<int64_t>("config/timeout", 30) != akasha::Status::ok) {
+    // handle error
+}
+```
 
 **Possible errors:**
-- `invalid_key_path`: Path is not in `dataset.key` format.
-- `dataset_not_found`: Dataset is not loaded.
-- `key_conflict`: Key exists but is an intermediate node, not a leaf.
-- `file_write_error`: Error writing to file.
-- `file_full`: Insufficient space (growth attempt failed).
 
-### `get<T>(key_path)`
+| Status | Cause |
+|---|---|
+| `invalid_key_path` | Path does not have `dataset/key` format. |
+| `dataset_not_found` | The dataset is not loaded. |
+| `key_conflict` | Key already exists as an intermediate node. |
+| `file_write_error` | Error writing to file. |
+| `file_full` | No space; automatic growth failed. |
+| `type_error` | Numeric overflow (e.g., `uint64_t` > `INT64_MAX`). |
 
-Get a typed value from a key.
+### `get<T>(key_path)` — Read
+
+Reads a typed value. Returns `std::optional<T>`: contains the value if it exists, `std::nullopt` otherwise.
 
 ```cpp
-auto retries = store.get<int64_t>("config.retries");
-if (retries.has_value()) {
-    std::cout << "Retries: " << *retries << std::endl;
+auto timeout = store.get<int64_t>("config/timeout");
+if (timeout.has_value()) {
+    std::cout << "Timeout: " << *timeout << "\n";
 }
 ```
 
-Reads from memory-mapped file and returns a copy of the stored value.
-
-**Behavior:**
-- If the key does not exist or has no value, returns `std::nullopt`.
-
-### `get<DatasetView>(key_path)`
-
-Get a navigable view over an node.
+Without template parameter or with `DatasetView`, returns a navigable view:
 
 ```cpp
-auto cfg = store.get<akasha::Store::DatasetView>("config.database");
-if (cfg.has_value()) {
-    auto host = cfg->get<std::string>("host");
-    auto port = cfg->get<int64_t>("port");
+auto view = store.get("config/server");
+// equivalent to: store.get<akasha::Store::DatasetView>("config/server")
+```
+
+### `getorset<T>(key_path, default_value)` — Lazy Initialization
+
+If the key exists, returns its value. If not, writes `default_value`, persists it, and returns it.
+
+```cpp
+auto timeout = store.getorset<int64_t>("config/timeout", 30);
+// If "config/timeout" didn't exist, it now contains 30
+```
+
+Works with all supported types, including `DatasetView`, vectors, and custom types.
+
+### `set_null(key_path)` — Null Value
+
+Sets a null marker at the key. After `set_null`:
+
+- `has(key)` returns `true`
+- `get<T>(key)` returns `std::nullopt` for any `T`
+
+```cpp
+store.set_null("config/deprecated_field");
+```
+
+### `has(key_path)` — Existence
+
+Checks if a path exists (whether it's a leaf or intermediate node).
+
+```cpp
+if (store.has("config/timeout")) {
+    // key exists
 }
 ```
 
-Allows navigating subkeys relative to the current position.
+### `clear(key_path)` — Deletion
 
-### `getorset<T>(key_path, default_value)`
-
-Get a value or set it with a default if it doesn't exist.
+Deletes persisted data.
 
 ```cpp
-auto timeout = store.getorset<int64_t>("config.timeout", 30);
-// If "config.timeout" didn't exist, it now contains 30
+store.clear();                    // All in all datasets
+store.clear("config");            // All of dataset "config"
+store.clear("config/database");   // Subkey and entire subtree
 ```
 
-Useful for lazy initialization of configuration values.
+### `compact(dataset_id)` — Compaction
 
-### `has(key_path)`
-
-Check if a key exists.
+Compacts the memory-mapped file to reclaim space freed by `clear()`.
 
 ```cpp
-if (store.has("config.timeout")) {
-    auto val = store.get<int64_t>("config.timeout");
-}
+store.compact("config");   // Compact one dataset
+store.compact();           // Compact all
 ```
 
-Does not distinguish between leaf and intermediate nodes.
+### `last_status()` — Last Status
 
-### `clear(key_path = "")`
-
-Delete persisted data.
+Returns the `Status` of the last operation. Useful when `get<T>()` returns `nullopt` and you need to know why.
 
 ```cpp
-// Delete everything
-store.clear();
-
-// Delete entire dataset
-store.clear("config");
-
-// Delete a subtree
-store.clear("config.database");
-```
-
-- If `key_path` is empty, deletes all data from all datasets.
-- If it includes only a dataset (e.g., "user"), deletes all data in that dataset.
-- If it includes a subkey, deletes that key and its entire subtree.
-
-### `compact(dataset_id = "")`
-
-Compact a memory-mapped file to reclaim space.
-
-```cpp
-// Compact a specific dataset
-store.compact("config");
-
-// Compact all datasets
-store.compact();
-```
-
-Useful after `clear()` operations to free disk space.
-
-### `last_status()`
-
-Get the status of the last operation.
-
-```cpp
-auto result = store.get<int64_t>("config.missing");
-if (result == std::nullopt) {
+auto val = store.get<int64_t>("config/missing");
+if (!val) {
     auto status = store.last_status();
-    std::cerr << "Status: " << static_cast<int>(status) << std::endl;
+    // status == Status::key_not_found
 }
 ```
 
-Returns `Status::ok` if the last operation succeeded, otherwise returns the error code.
+---
 
-## DatasetView Methods
+## Supported Types and Conversions
 
-`DatasetView` is a navigable read-only window into a node and its descendants. Obtained via `store.get<DatasetView>(key_path)`.
+### Native Scalar Types
 
-### `has_value()`
+| C++ Type | Internal TypeTag | Size | Notes |
+|---|---|---|---|
+| `bool` | `bool_type` (0x01) | 1 byte | |
+| `int64_t` | `int64_type` (0x02) | 8 bytes | Little-endian |
+| `double` | `double_type` (0x03) | 8 bytes | IEEE 754 |
+| `std::string` | `string_type` (0x04) | 8 + N bytes | Length prefix `size_t` + data |
 
-Check if the node has a direct atomic value.
+### Automatic Conversions
+
+| Original Type | Converts to | Validation |
+|---|---|---|
+| `int`, `int32_t`, `short`, etc. | `int64_t` | Always safe (wider range) |
+| `uint64_t`, `size_t` | `int64_t` | Fails with `type_error` if > `INT64_MAX` |
+| `float` | `double` | Always safe |
+
+When reading with `get<T>()`, inverse range validation is applied:
 
 ```cpp
-auto view = store.get<akasha::Store::DatasetView>("config.server");
-if (view && view->has_value()) {
-    // This node has a direct value (not just descendants)
+store.set<int64_t>("key", 300);
+auto val = store.get<int8_t>("key");  // std::nullopt (300 > 127)
+```
+
+### Compound Types
+
+| Type | Mechanism | Metadata |
+|---|---|---|
+| Custom struct | `Serializable<T>` (user) | — |
+| Indexed container | `SequentialSerializable<T>` (built-in for STL) | `__count__` |
+| Key-value container | `ArbitrarySerializable<T>` (built-in for STL) | `__children__` |
+| `DatasetView` | Subtree view | — |
+
+---
+
+## DatasetView — Hierarchical Navigation
+
+`DatasetView` is a window over a tree node and its descendants. Obtained with `store.get<DatasetView>(key_path)` or simply `store.get(key_path)`.
+
+### Getting a View
+
+```cpp
+// Set up hierarchical data
+store.set<int64_t>("config/server/port", 8080);
+store.set<std::string>("config/server/host", "localhost");
+store.set<bool>("config/server/ssl", true);
+
+// Get view of subtree "server"
+auto server = store.get<akasha::Store::DatasetView>("config/server");
+```
+
+### `keys()` — Direct Children
+
+Returns `std::vector<std::string>` with direct child keys (non-recursive).
+
+```cpp
+if (server) {
+    auto keys = server->keys();
+    // keys: ["host", "port", "ssl"]
 }
 ```
 
-**Returns:**
-- `true` if a value exists at this exact node
-- `false` if node is a container only (intermediate node with children)
+### `get<T>(relative_path)` — Relative Read
 
-### `has_keys()`
-
-Check if the node has descendant keys.
+Navigates from the current position using relative paths.
 
 ```cpp
-auto view = store.get<akasha::Store::DatasetView>("config.server");
-if (view && view->has_keys()) {
-    // This node has child keys
+if (server) {
+    auto port = server->get<int64_t>("port");           // 8080
+    auto host = server->get<std::string>("host");        // "localhost"
+
+    // Nested views
+    auto nested = server->get<akasha::Store::DatasetView>("ssl_config");
 }
 ```
 
-**Returns:**
-- `true` if there are any keys under this node
-- `false` if node is a leaf (direct value only, no descendants)
-
-### `keys()`
-
-Get immediate child keys (non-recursive).
+### `set<T>(relative_path, value)` — Relative Write
 
 ```cpp
-auto view = store.get<akasha::Store::DatasetView>("config.server");
-if (view) {
-    auto child_keys = view->keys();
-    for (const auto& key : child_keys) {
-        std::cout << key << "\n";  // Only immediate children
+if (server) {
+    server->set<int64_t>("port", 9000);  // Modifies config/server/port
+}
+```
+
+### `has(relative_path)` — Relative Existence
+
+```cpp
+if (server && server->has("port")) {
+    // "port" exists under this node
+}
+```
+
+### `has_value()` — Is Leaf?
+
+```cpp
+if (server->has_value()) {
+    // This node has a direct scalar value
+}
+```
+
+### `has_keys()` — Has Children?
+
+```cpp
+if (server->has_keys()) {
+    // This node has subkeys
+}
+```
+
+### Copy Subtrees with DatasetView
+
+`set<DatasetView>` copies an entire subtree to another location:
+
+```cpp
+auto original = store.get<akasha::Store::DatasetView>("config/server");
+if (original) {
+    store.set<akasha::Store::DatasetView>("config/server_backup", *original);
+}
+```
+
+Also works across different datasets:
+
+```cpp
+store.load("backup", "/tmp/backup.db", akasha::FileOptions::create_if_missing);
+auto src = store.get<akasha::Store::DatasetView>("config");
+if (src) {
+    store.set<akasha::Store::DatasetView>("backup", *src);
+}
+```
+
+---
+
+## Custom Types — Serializable\<T\>
+
+To store structs with fixed fields, specialize `akasha::Serializable<T>`. Without this specialization, `store.set<T>()` will not compile.
+
+### Define the Specialization
+
+```cpp
+struct Point {
+    double x, y, z;
+};
+
+template<>
+struct akasha::Serializable<Point> {
+    static void serialize(const Point& p, akasha::BatchWriter& bw) {
+        (void)bw.set<double>("x", p.x);
+        (void)bw.set<double>("y", p.y);
+        (void)bw.set<double>("z", p.z);
+    }
+
+    static std::optional<Point> deserialize(const akasha::BatchReader& br) {
+        auto x = br.get<double>("x");
+        auto y = br.get<double>("y");
+        auto z = br.get<double>("z");
+        if (!x || !y || !z) return std::nullopt;
+        return Point{*x, *y, *z};
+    }
+};
+```
+
+### Use with Store
+
+```cpp
+Point origin{1.5, 2.7, 3.14};
+store.set<Point>("db/origin", origin);
+
+auto restored = store.get<Point>("db/origin");
+if (restored) {
+    std::cout << restored->x << ", " << restored->y << ", " << restored->z;
+}
+
+// Individual fields are still accessible as scalars
+auto x = store.get<double>("db/origin/x");  // 1.5
+```
+
+### Nested Structs
+
+For types containing other serializable types, use `bw.set<T>()` and `br.get<T>()` which handle hierarchy internally:
+
+```cpp
+struct Color {
+    int64_t r, g, b;
+    std::string name;
+};
+
+struct Theme {
+    Point origin;
+    Color accent;
+    double scale;
+};
+
+template<>
+struct akasha::Serializable<Color> {
+    static void serialize(const Color& c, akasha::BatchWriter& bw) {
+        (void)bw.set<int64_t>("r", c.r);
+        (void)bw.set<int64_t>("g", c.g);
+        (void)bw.set<int64_t>("b", c.b);
+        (void)bw.set<std::string>("name", c.name);
+    }
+    static std::optional<Color> deserialize(const akasha::BatchReader& br) {
+        auto r = br.get<int64_t>("r");
+        auto g = br.get<int64_t>("g");
+        auto b = br.get<int64_t>("b");
+        auto name = br.get<std::string>("name");
+        if (!r || !g || !b || !name) return std::nullopt;
+        return Color{*r, *g, *b, *name};
+    }
+};
+
+template<>
+struct akasha::Serializable<Theme> {
+    static void serialize(const Theme& t, akasha::BatchWriter& bw) {
+        (void)bw.set<Point>("origin", t.origin);
+        (void)bw.set<Color>("accent", t.accent);
+        (void)bw.set<double>("scale", t.scale);
+    }
+    static std::optional<Theme> deserialize(const akasha::BatchReader& br) {
+        auto origin = br.get<Point>("origin");
+        auto accent = br.get<Color>("accent");
+        auto scale = br.get<double>("scale");
+        if (!origin || !accent || !scale) return std::nullopt;
+        return Theme{*origin, *accent, *scale};
+    }
+};
+```
+
+---
+
+## Sequential Containers — SequentialSerializable\<T\>
+
+For types representing indexed collections (vectors, deques, etc.), specialize `SequentialSerializable<T>`. The infrastructure automatically writes a `__count__` metadata with the element count.
+
+### Required Interface
+
+```cpp
+template<>
+struct akasha::SequentialSerializable<MyContainer> {
+    // Serializes each element using bw.set<ElementType>(index_str, element)
+    static void serialize(const MyContainer& c, akasha::BatchWriter& bw);
+
+    // Reconstructs container reading __count__ and each indexed element
+    static std::optional<MyContainer> deserialize(const akasha::BatchReader& br);
+
+    // Returns element count
+    static int64_t size(const MyContainer& c);
+};
+```
+
+### Example: Custom Deque
+
+```cpp
+template<typename T>
+struct akasha::SequentialSerializable<std::deque<T>> {
+    static void serialize(const std::deque<T>& d, akasha::BatchWriter& bw) {
+        for (size_t i = 0; i < d.size(); ++i)
+            (void)bw.set(std::to_string(i), d[i]);
+    }
+    static std::optional<std::deque<T>> deserialize(const akasha::BatchReader& br) {
+        auto count = br.get_count();  // reads __count__
+        if (!count || *count < 0) return std::nullopt;
+        std::deque<T> result;
+        for (size_t i = 0; i < static_cast<size_t>(*count); ++i) {
+            auto elem = br.get<T>(std::to_string(i));
+            if (!elem) return std::nullopt;
+            result.push_back(std::move(*elem));
+        }
+        return result;
+    }
+    static int64_t size(const std::deque<T>& d) {
+        return static_cast<int64_t>(d.size());
+    }
+};
+```
+
+---
+
+## Arbitrary Containers — ArbitrarySerializable\<T\>
+
+For types with arbitrary keys (maps, named sets, etc.), specialize `ArbitrarySerializable<T>`. The infrastructure automatically writes `__children__` with the key list separated by `\n`.
+
+### Required Interface
+
+```cpp
+template<>
+struct akasha::ArbitrarySerializable<MyMap> {
+    // Serializes each entry using bw.set<ValueType>(key_str, value)
+    static void serialize(const MyMap& m, akasha::BatchWriter& bw);
+
+    // Reconstructs reading __children__ and each entry by key
+    static std::optional<MyMap> deserialize(const akasha::BatchReader& br);
+
+    // Returns direct keys
+    static std::vector<std::string> keys(const MyMap& m);
+};
+```
+
+Note: `BatchReader::get_children()` parses the `__children__` string and returns `std::vector<std::string>` with the keys.
+
+---
+
+## std::vector\<T\> — Built-in Support
+
+The following STL containers have built-in `SequentialSerializable` or `ArbitrarySerializable` specializations that work without additional user code.
+
+### Sequential Containers (indexed by position)
+
+| Container | Notes |
+|---|---|
+| `std::vector<T>` | Dynamic array, supports `reserve` |
+| `std::list<T>` | Doubly-linked list |
+| `std::set<T>` | Ordered unique set |
+| `std::unordered_set<T>` | Hash-based unique set |
+| `std::array<T,N>` | Fixed-size; `N` must match on deserialization |
+
+```cpp
+// Sequential containers
+std::vector<int64_t> v = {1, 2, 3};
+store.set<std::vector<int64_t>>("db/v", v);
+
+std::list<double> l = {1.1, 2.2, 3.3};
+store.set<std::list<double>>("db/l", l);
+
+std::set<int64_t> s = {10, 20, 30};
+store.set<std::set<int64_t>>("db/s", s);
+
+std::unordered_set<int64_t> us = {10, 20, 30};
+store.set<std::unordered_set<int64_t>>("db/us", us);
+
+std::array<double, 3> a = {1.0, 2.0, 3.0};
+store.set<std::array<double, 3>>("db/a", a);
+```
+
+### Cross-Container Reads
+
+Any sequential container can be read back as a different sequential container. The data is stored by position, so the conversion is transparent:
+
+```cpp
+std::vector<int64_t> original = {10, 20, 30};
+store.set<std::vector<int64_t>>("db/seq", original);
+
+// Read as different container types
+auto as_list = store.get<std::list<int64_t>>("db/seq");           // ok
+auto as_set  = store.get<std::set<int64_t>>("db/seq");            // ok
+auto as_arr  = store.get<std::array<int64_t, 3>>("db/seq");       // ok (N must match count)
+```
+
+### Key-Value Containers (indexed by key)
+
+| Container | Key types supported |
+|---|---|
+| `std::map<K,V>` | `std::string`, any arithmetic type |
+| `std::unordered_map<K,V>` | `std::string`, any arithmetic type |
+
+```cpp
+std::map<std::string, int64_t> m = {{"timeout", 30}, {"retries", 5}};
+store.set<std::map<std::string, int64_t>>("db/cfg", m);
+
+auto restored = store.get<std::map<std::string, int64_t>>("db/cfg");
+// restored->at("timeout") == 30
+
+// Can be read back as unordered_map and vice versa
+auto as_unordered = store.get<std::unordered_map<std::string, int64_t>>("db/cfg");
+```
+
+### Internal Format — Sequential
+
+Each element is stored as an indexed subkey:
+
+```
+sensors/readings/0  → 22
+sensors/readings/1  → 23
+sensors/readings/2  → 21
+sensors/readings/3  → 24
+sensors/readings/__count__  → 4
+```
+
+This allows accessing individual elements as scalars:
+
+```cpp
+auto second = store.get<int>("sensors/readings/1");  // 23
+```
+
+---
+
+## BatchWriter and BatchReader
+
+`BatchWriter` and `BatchReader` provide transactional interfaces for bulk write/read operations. Used primarily internally by serialization specializations, but are part of the public API.
+
+### BatchWriter
+
+Constructed with a reference to `Store` and a key prefix:
+
+```cpp
+akasha::BatchWriter bw(store, "db/complex_data");
+// Acquires exclusive lock automatically
+```
+
+**Main Methods:**
+
+| Method | Description |
+|---|---|
+| `set<T>(key, value)` | Writes a value under current prefix |
+| `set_null(key)` | Writes null marker |
+| `set_raw(key, bytes, size, tag)` | Raw bytes write with TypeTag |
+| `clear_children()` | Deletes all subkeys under prefix |
+| `commit()` | Confirms operations and releases lock |
+| `has(key)` | Checks relative existence |
+| `has_value()` | Does current node have direct value? |
+| `has_keys()` | Does current node have children? |
+| `keys()` | Direct child keys |
+
+Exclusive lock acquired in constructor, released with `commit()` or destructor.
+
+### BatchReader
+
+```cpp
+const akasha::BatchReader br(store, "db/complex_data");
+// Acquires shared lock automatically
+```
+
+**Main Methods:**
+
+| Method | Description |
+|---|---|
+| `get<T>(key)` | Reads value under current prefix |
+| `get_raw(key)` | Raw bytes read (`string_view`) |
+| `get_count()` | Reads `__count__` metadata (for sequential) |
+| `get_children()` | Reads and parses `__children__` (for arbitrary) |
+| `has(key)` | Checks relative existence |
+| `has_value()` | Does current node have direct value? |
+| `has_keys()` | Does current node have children? |
+| `keys()` | Direct child keys |
+
+Shared lock acquired in constructor, released in destructor.
+
+---
+
+## Status — Error Codes
+
+```cpp
+enum class Status {
+    ok,                     // Operation successful
+    invalid_key_path,       // Path without dataset/key format
+    invalid_file_path,      // Invalid file path
+    key_conflict,           // Hierarchical conflict (intermediate vs leaf)
+    file_read_error,        // Error reading memory-mapped file
+    file_write_error,       // Error writing memory-mapped file
+    file_not_found,         // File doesn't exist and create_if_missing not used
+    file_full,              // No space after growth attempts
+    parse_error,            // Internal data corrupted
+    dataset_not_found,      // Dataset (first segment) not loaded
+    key_not_found,          // Key doesn't exist
+    source_already_loaded,  // Dataset with that source_id already exists
+    incompatible_format,    // Incompatible format without migrate_if_incompatible
+    type_error,             // Numeric overflow or type mismatch
+};
+```
+
+### Diagnostic Helper Function
+
+```cpp
+void print_status(akasha::Status s) {
+    switch (s) {
+        case akasha::Status::ok:                    std::cout << "OK\n"; break;
+        case akasha::Status::invalid_key_path:      std::cout << "Invalid path\n"; break;
+        case akasha::Status::invalid_file_path:     std::cout << "Invalid file\n"; break;
+        case akasha::Status::key_conflict:          std::cout << "Key conflict\n"; break;
+        case akasha::Status::file_read_error:       std::cout << "Read error\n"; break;
+        case akasha::Status::file_write_error:      std::cout << "Write error\n"; break;
+        case akasha::Status::file_not_found:        std::cout << "File not found\n"; break;
+        case akasha::Status::file_full:             std::cout << "File full\n"; break;
+        case akasha::Status::parse_error:           std::cout << "Parse error\n"; break;
+        case akasha::Status::dataset_not_found:     std::cout << "Dataset not found\n"; break;
+        case akasha::Status::key_not_found:         std::cout << "Key not found\n"; break;
+        case akasha::Status::source_already_loaded: std::cout << "Already loaded\n"; break;
+        case akasha::Status::incompatible_format:   std::cout << "Incompatible format\n"; break;
+        case akasha::Status::type_error:            std::cout << "Type error\n"; break;
     }
 }
 ```
 
-**Returns:** `std::vector<std::string>` with immediate children only (not descendants).
+---
 
-### `get<T>(relative_path)`
+## FileOptions — Load Options
 
-Navigate relatively from this view.
-
-```cpp
-auto view = store.get<akasha::Store::DatasetView>("config.server");
-if (view) {
-    // Navigate relative paths
-    auto port = view->template get<int32_t>("port");
-    auto host = view->template get<std::string>("host");
-    
-    // Get nested views
-    auto ssl_view = view->template get<akasha::Store::DatasetView>("ssl");
-}
-```
-
-**Parameters:**
-- `relative_path`: Path relative to this view (can be empty for this view itself)
-
-**Returns:** `std::optional<T>` with the value/view if it exists.
-
-### `has(relative_path)`
-
-Check if a relative path exists from this view.
+`FileOptions` is a bitmask controlling `load()` behavior.
 
 ```cpp
-auto view = store.get<akasha::Store::DatasetView>("config.server");
-if (view && view->has("port")) {
-    // This view has a "port" child
-}
-```
-
-**Returns:** `true` if the relative path exists, `false` otherwise.
-
-## Status Enum
-
-```cpp
-enum class Status {
-    ok = 0,
-    invalid_key_path,       // Key doesn't have at least 2 dot-separated segments
-    key_conflict,           // Conflict on write (e.g., overwriting intermediate with leaf)
-    file_read_error,        // Could not read from memory-mapped file
-    file_write_error,       // Could not write to memory-mapped file
-    file_not_found,         // File doesn't exist and create_if_missing=false
-    file_full,              // File full after growth attempts
-    parse_error,            // Error parsing internal data
-    dataset_not_found,      // Dataset (first key segment) not loaded
-    source_already_loaded   // Dataset already exists (duplicate source_id in load)
+enum class FileOptions {
+    none                     = 0,  // No special options
+    create_if_missing        = 1,  // Create empty file if doesn't exist
+    migrate_if_incompatible  = 2,  // Migrate format if incompatible
 };
 ```
 
-## Performance Tuning
+Combined with `|` operator:
 
-Configure file growth parameters:
+```cpp
+auto status = store.load("db", "/tmp/data.db",
+    akasha::FileOptions::create_if_missing | akasha::FileOptions::migrate_if_incompatible);
+```
+
+| Flag | Effect |
+|---|---|
+| `none` | File must exist and be compatible. |
+| `create_if_missing` | Creates empty file if doesn't exist. |
+| `migrate_if_incompatible` | Attempts migration if format is incompatible. |
+
+---
+
+## PerformanceTuning — Performance Tuning
+
+Controls automatic growth of memory-mapped files.
+
+```cpp
+struct PerformanceTuning {
+    size_t initial_mapped_file_size = 64 * 1024;   // 64 KB initial
+    size_t initial_grow_step        = 32 * 1024;    // 32 KB per growth
+    int    max_grow_retries         = 8;            // Max attempts
+};
+```
+
+### Configure
 
 ```cpp
 akasha::PerformanceTuning tuning;
 tuning.initial_mapped_file_size = 1024 * 1024;  // 1 MB initial
-tuning.initial_grow_step = 512 * 1024;          // Grow 512 KB each time
-tuning.max_grow_retries = 16;                   // Attempt up to 16 times
+tuning.initial_grow_step = 512 * 1024;           // 512 KB per growth
+tuning.max_grow_retries = 16;
 
 store.set_performance_tuning(tuning);
 ```
 
-Get current configuration:
+### Query
 
 ```cpp
 auto tuning = store.performance_tuning();
-std::cout << "Initial size: " << tuning.initial_mapped_file_size << " bytes" << std::endl;
+std::cout << "Initial size: " << tuning.initial_mapped_file_size << " bytes\n";
 ```
 
-## Usage Examples
+> **Note:** Parameters apply to new file creation and future growth. They don't change already-mapped files.
 
-### Atomic Dataset Values
+---
 
-Store a single value at dataset root:
+## Internal Binary Format
+
+Each stored value has a type byte (`TypeTag`) followed by payload:
+
+| TypeTag | Value | Payload |
+|---|---|---|
+| `null_type` | `0x00` | No payload |
+| `bool_type` | `0x01` | 1 byte |
+| `int64_type` | `0x02` | 8 bytes (little-endian) |
+| `double_type` | `0x03` | 8 bytes (IEEE 754) |
+| `string_type` | `0x04` | `size_t` (8 bytes) + N bytes of data |
+
+Compound types have no TypeTag: they decompose into scalar subkeys.
+
+---
+
+## Thread Safety and Concurrency
+
+- Each memory-mapped file has its own `std::shared_mutex`.
+- **Reads** (`get<T>`, `has`, `keys`): acquire shared lock. Multiple simultaneous readers.
+- **Writes** (`set<T>`, `clear`, `compact`): acquire exclusive lock. Block readers and other writers.
+- `BatchWriter` holds exclusive lock from construction until `commit()` or destruction.
+- `BatchReader` holds shared lock throughout its lifetime.
+- Safe to operate on different datasets from multiple threads simultaneously (independent locks).
+
+---
+
+## Edge Cases and Robustness
+
+### String Reallocation
+
+Overwriting strings of different sizes works correctly:
 
 ```cpp
-akasha::Store store;
-store.load("counter", "./counter.dat", true);
+store.set<std::string>("data/text", "small");
+store.set<std::string>("data/text", "much much larger string with more content");
+store.set<std::string>("data/text", "x");
 
-// Set an atomic int64 at dataset root
-store.set<int64_t>("counter", 42);
-
-// Read it back
-auto val = store.get<int64_t>("counter");
-if (val.has_value()) {
-    std::cout << "Counter: " << *val << std::endl;
-}
-
-// Check existence
-if (store.has("counter")) {
-    std::cout << "Counter exists" << std::endl;
-}
-
-// Clear the dataset
-store.clear("counter");
+auto text = store.get<std::string>("data/text");
+// text.value() == "x" — no residual bytes
 ```
 
-### Application Configuration
+### Numeric Extremes
 
 ```cpp
-akasha::Store config;
-config.load("app", "./config.dat", true);
+store.set<int64_t>("limits/min", INT64_MIN);
+store.set<int64_t>("limits/max", INT64_MAX);
+store.set<double>("limits/near_zero", 1e-308);
+store.set<double>("limits/large", 1e308);
 
-// Initialize with defaults
-config.getorset<std::string>("app.name", "MyApp");
-config.getorset<int64_t>("app.port", 8080);
-config.getorset<std::string>("app.version", "1.0.0");
-
-// Read later
-auto port = config.get<int64_t>("app.port");
+// All retrieve exactly
 ```
 
-### Multiple Datasets
+### Integer Overflow
 
 ```cpp
-akasha::Store store;
-store.load("config", "./config.dat", true);
-store.load("cache", "./cache.dat", true);
-store.load("state", "./state.dat", true);
+// uint64_t exceeding INT64_MAX → type_error
+uint64_t big = static_cast<uint64_t>(INT64_MAX) + 1;
+auto status = store.set<uint64_t>("data/big", big);
+// status == Status::type_error
 
-// Each dataset is independent
-store.set<int64_t>("config.timeout", 30);
-store.set<int64_t>("cache.entries", 1000);
-store.set<std::string>("state.status", "running");
+// Read with insufficient range → nullopt
+store.set<int64_t>("data/val", 300);
+auto narrow = store.get<int8_t>("data/val");
+// narrow == std::nullopt (300 > 127)
 ```
 
-### Custom Structures
+### Unicode and Special Characters
+
+Full UTF-8 support with byte-exact preservation:
 
 ```cpp
-struct Point {
-    int64_t x, y;
-};
-static_assert(std::is_trivially_copyable_v<Point>);
+store.set<std::string>("lang/rtl", "العربية");
+store.set<std::string>("lang/cjk", "中文 日本語 한국語");
+store.set<std::string>("lang/emoji", "🎉🚀🌟");
 
-store.set<Point>("map.origin", {0, 0});
-auto p = store.get<Point>("map.origin");
-if (p.has_value()) {
-    std::cout << "(" << p->x << ", " << p->y << ")" << std::endl;
-}
+// All retrieve exactly as stored
 ```
 
-### Hierarchical Navigation
+### Large Values
 
 ```cpp
-auto cfg = store.get<akasha::Store::DatasetView>("app.database");
-if (cfg.has_value()) {
-    auto keys = cfg->keys();
-    for (const auto& key : keys) {
-        std::cout << key << std::endl;
-    }
-    
-    auto host = cfg->get<std::string>("host");
-    auto port = cfg->get<int64_t>("port");
-}
+// 1 MB string
+std::string large(1024 * 1024, 'x');
+store.set<std::string>("data/large_string", large);
+
+// 100K element vector
+std::vector<int64_t> big_array(100000);
+std::iota(big_array.begin(), big_array.end(), 0);
+store.set<std::vector<int64_t>>("data/big_array", big_array);
 ```
 
-## Security and Considerations
+### Persistence Across Sessions
 
-- **Thread-safety**: Operations on the same Store from multiple threads are safe. Each memory-mapped file has its own `std::shared_mutex`.
+Data persists immediately to the memory-mapped file. `unload()` + `load()` recovers everything:
 
-- **Type responsibility**: You are 100% responsible for ensuring that type `T` used in `set<T>` and `get<T>` is consistent. There is no runtime type validation.
+```cpp
+store.set<int64_t>("db/counter", 42);
+store.unload("db");
 
-- **Persistence**: All writes with `set<T>()` are immediate and persistent. There is no internal buffer.
+// Later...
+store.load("db", "/tmp/data.db");
+auto val = store.get<int64_t>("db/counter");  // 42
+```
 
-- **File growth**: If a `set<T>()` requires more space, the file grows automatically according to `PerformanceTuning`. If growth fails, `Status::file_full` is returned.
+---
 
-- **Trivially copyable**: Only trivially copyable types are supported. Structs with pointers, internal strings, or custom logic will not work correctly.
+## Compilation and Integration
 
-## Compilation Cycle
+### Requirements
 
-Include in your CMake project:
+- **C++23** (GCC 13+ or Clang 16+)
+- **Boost.Interprocess** (managed by Conan)
+- **CMake 3.16+**
+
+### With Conan (Recommended)
+
+```bash
+# Install dependencies and configure
+conan install . --output-folder=build --build=missing -s build_type=Release
+cmake -S . -B build \
+    -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+    -DCMAKE_BUILD_TYPE=Release
+
+# Compile
+cmake --build build -j
+```
+
+### CMake Subdirectory Integration
 
 ```cmake
 add_subdirectory(vendor/akasha)
 target_link_libraries(myapp akasha::akasha)
 ```
 
-Compile with C++23:
+### CMake Options
 
-```cmake
-set(CMAKE_CXX_STANDARD 23)
-```
+| Option | Default | Description |
+|---|---|---|
+| `BUILD_EXAMPLE` | `OFF` | Compiles examples in `examples/` |
+| `BUILD_TESTS` | `OFF` | Compiles test suite |
+| `BUILD_BENCHMARKS` | `OFF` | Compiles benchmarks |
 
-## Building Examples
-
-Examples are in `examples/` but do not compile by default.
-
-To build examples:
+### Build and Run Examples
 
 ```bash
-cmake . -B build -DBUILD_EXAMPLE=ON
+cmake -S . -B build \
+    -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_EXAMPLE=ON
 cmake --build build -j
+
+./build/akasha_quickstart
+./build/akasha_serializable
+./build/akasha_vectors
+./build/akasha_datasetview
+./build/akasha_nested_data
 ```
 
-Run:
+### Build and Run Tests
 
 ```bash
-./build/akasha_quickstart
-./build/akasha_benchmarks
+cmake -S . -B build \
+    -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_TESTS=ON
+cmake --build build -j
+./build/akasha_tests
 ```
-
-CMake auto-resets `BUILD_EXAMPLE` to `OFF` after compilation, so subsequent builds without the flag only rebuild the library.
-
-## Diagnostics
-
-To verify what loaded correctly:
-
-```cpp
-akasha::Store store;
-auto status = store.load("test", "/path/to/test.dat", true);
-
-if (status != akasha::Status::ok) {
-    std::cerr << "Error: " << static_cast<int>(status) << std::endl;
-}
-
-// Verify datasets with has()
-if (store.has("test.key")) {
-    std::cout << "Dataset 'test' loaded successfully" << std::endl;
-}
-```
-
-## Next Steps
-
-- Read the examples in `examples/` for common usage patterns.
-- Consult `include/akasha.hpp` for inline method documentation.
-- Report issues on the repository if you encounter unexpected behavior.
-

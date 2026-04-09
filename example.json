@@ -1,0 +1,112 @@
+{
+  "_purpose": "RFC 8259 complete coverage — one field per JSON feature",
+
+  "types": {
+    "string":  "hello",
+    "number":  42,
+    "object":  { "key": "value" },
+    "array":   [1, 2, 3],
+    "true":    true,
+    "false":   false,
+    "null":    null
+  },
+
+  "strings": {
+    "empty":                    "",
+    "ascii":                    "Hello, World!",
+    "whitespace_inside":        "foo   bar",
+    "escape_quote":             "she said \"hello\"",
+    "escape_backslash":         "C:\\Users\\miguel",
+    "escape_solidus":           "https:\/\/example.com",
+    "escape_backspace":         "before\bafter",
+    "escape_form_feed":         "before\fafter",
+    "escape_newline":           "line1\nline2",
+    "escape_carriage_return":   "line1\rline2",
+    "escape_tab":               "col1\tcol2",
+    "escape_unicode_4hex":      "\u0041\u0042\u0043",
+    "unicode_bmp":              "日本語",
+    "unicode_supplementary":    "𝄞",
+    "unicode_emoji":            "🚀🔑🌍",
+    "unicode_rtl":              "مرحبا بالعالم",
+    "unicode_mixed_scripts":    "αβγ — Ñoño — عربي — 中文",
+    "all_escapes_combined":     "tab:\t newline:\n quote:\" backslash:\\ unicode:\u03A9"
+  },
+
+  "numbers": {
+    "zero":                     0,
+    "positive_integer":         42,
+    "negative_integer":         -7,
+    "negative_zero":            -0,
+    "fraction":                 3.14159,
+    "fraction_leading_zero":    0.5,
+    "negative_fraction":        -0.001,
+    "exponent_lowercase":       1e10,
+    "exponent_uppercase":       1E10,
+    "exponent_plus":            1e+10,
+    "exponent_minus":           1e-10,
+    "negative_exponent_minus":  -2.5e-4,
+    "fraction_and_exponent":    6.022e23,
+    "max_safe_integer":         9007199254740991,
+    "min_safe_integer":         -9007199254740991,
+    "one":                      1,
+    "minus_one":                -1
+  },
+
+  "arrays": {
+    "empty":            [],
+    "single_element":   [1],
+    "of_strings":       ["a", "b", "c"],
+    "of_numbers":       [1, -2, 3.14, 1e5],
+    "of_booleans":      [true, false],
+    "of_nulls":         [null, null],
+    "of_objects":       [{ "x": 1 }, { "x": 2 }],
+    "of_arrays":        [[1, 2], [3, 4]],
+    "mixed_types":      [1, "two", true, null, { "k": "v" }, [5, 6]],
+    "nested":           [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+  },
+
+  "objects": {
+    "empty":            {},
+    "single_key":       { "a": 1 },
+    "multiple_keys":    { "a": 1, "b": 2, "c": 3 },
+    "nested":           { "outer": { "inner": { "deep": true } } },
+    "all_value_types":  {
+      "s": "string",
+      "n": 42,
+      "f": 3.14,
+      "b_true": true,
+      "b_false": false,
+      "null_v": null,
+      "obj": {},
+      "arr": []
+    },
+    "special_keys": {
+      "":             "empty key — valid per spec",
+      " ":            "space key",
+      "with space":   true,
+      "with-dash":    true,
+      "with.dot":     true,
+      "with/slash":   true,
+      "with\\bslash": true,
+      "with\"quote":  true,
+      "123numeric":   true,
+      "UPPER":        true,
+      "lower":        true,
+      "camelCase":    true,
+      "snake_case":   true,
+      "emoji_🔑":     true,
+      "unicode_αβγ":  true
+    }
+  },
+
+  "nesting": {
+    "object_in_array":  [{ "a": 1 }],
+    "array_in_object":  { "items": [1, 2, 3] },
+    "depth_5": {
+      "l1": { "l2": { "l3": { "l4": { "l5": "leaf" } } } }
+    },
+    "array_depth_5":    [[[[[42]]]]]
+  },
+
+  "whitespace_note": "JSON allows whitespace (space, tab, \\n, \\r) around tokens — not testable as values, but this doc uses all of them between keys and values intentionally"
+}

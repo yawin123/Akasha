@@ -1,145 +1,106 @@
 #include "akasha.hpp"
 #include <iostream>
-#include <cstring>
 
 /**
- * Demonstrates storage and retrieval of nested data structures.
+ * Demonstrates storage and retrieval of nested data (objects with fields).
  * 
- * Question: Are there nested structures?
- * Answer: Yes, you can store trivially copyable structs, including nested ones.
+ * In v2.0.0, nested data is achieved through hierarchical key paths.
+ * Users can build object structures using DatasetView for navigation.
  */
-
-// Internal structure (trivially copyable)
-struct Location {
-	double latitude;
-	double longitude;
-	
-	bool operator==(const Location& other) const {
-		return latitude == other.latitude && longitude == other.longitude;
-	}
-};
-
-// Complex structure containing other structures (trivially copyable)
-struct User {
-	int64_t id;
-	int32_t age;
-	char name[64];  // Fixed-size buffer para ser trivially copyable
-	Location home;
-	
-	bool operator==(const User& other) const {
-		return id == other.id && age == other.age && 
-		       std::strcmp(name, other.name) == 0 && 
-		       home == other.home;
-	}
-};
-
-// Even more complex structure
-struct UserProfile {
-	User user;
-	int64_t signup_timestamp;
-	int32_t login_count;
-	
-	bool operator==(const UserProfile& other) const {
-		return user == other.user && 
-		       signup_timestamp == other.signup_timestamp &&
-		       login_count == other.login_count;
-	}
-};
 
 int main() {
 	akasha::Store store;
 	
-	std::cout << "=== Nested Structures Demo ===\n\n";
+	std::cout << "=== Nested Data Structures Demo ===\n\n";
 	
 	// Load dataset
 	std::string file_path = "/tmp/akasha_nested.db";
-	auto status = store.load("profiles", file_path, akasha::FileOptions::create_if_missing);
+	auto status = store.load("app", file_path, akasha::FileOptions::create_if_missing);
 	if (status != akasha::Status::ok) {
 		std::cerr << "Failed to load dataset\n";
 		return 1;
 	}
 	
-	// Create nested structure
-	std::cout << "Creating nested structure (UserProfile -> User -> Location):\n\n";
+	// Create nested data through hierarchical paths
+	std::cout << "1. Creating nested user profile with location:\n\n";
 	
-	Location home = {41.3851, 2.1734};  // Barcelona
-	User user = {1001, 30, "Alice", home};
-	UserProfile profile = {user, 1577836800, 42};  // 1577836800 = 2020-01-01
-	
-	// Store complete nested structure
-	std::cout << "Storing UserProfile struct:\n";
-	auto status_set = store.set<UserProfile>("profiles.alice.data", profile);
-	if (status_set != akasha::Status::ok) {
-		std::cerr << "✗ Failed to store UserProfile: " << (int)status_set << "\n";
+	// Store alice's data
+	if (store.set<std::string>("app/users/alice/name", "Alice") != akasha::Status::ok ||
+	    store.set<int64_t>("app/users/alice/age", 30) != akasha::Status::ok ||
+	    store.set<double>("app/users/alice/location/latitude", 41.3851) != akasha::Status::ok ||
+	    store.set<double>("app/users/alice/location/longitude", 2.1734) != akasha::Status::ok) {
+		std::cerr << "✗ Failed to store alice's data\n";
 		return 1;
 	}
-	std::cout << "  user.id = " << profile.user.id << "\n";
-	std::cout << "  user.name = " << profile.user.name << "\n";
-	std::cout << "  user.age = " << profile.user.age << "\n";
-	std::cout << "  user.home = (" << profile.user.home.latitude 
-	          << ", " << profile.user.home.longitude << ")\n";
-	std::cout << "  login_count = " << profile.login_count << "\n\n";
 	
-	// Retrieve complete structure
-	std::cout << "Retrieving UserProfile struct:\n";
-	auto retrieved = store.get<UserProfile>("profiles.alice.data");
+	std::cout << "  ✓ Stored alice with location: Barcelona (41.3851, 2.1734)\n\n";
 	
-	if (retrieved.has_value()) {
-		std::cout << "✓ Successfully retrieved nested structure\n";
-		std::cout << "  user.id = " << retrieved->user.id << "\n";
-		std::cout << "  user.name = " << retrieved->user.name << "\n";
-		std::cout << "  user.age = " << retrieved->user.age << "\n";
-		std::cout << "  user.home = (" << retrieved->user.home.latitude 
-		          << ", " << retrieved->user.home.longitude << ")\n";
-		std::cout << "  signup_timestamp = " << retrieved->signup_timestamp << "\n";
-		std::cout << "  login_count = " << retrieved->login_count << "\n\n";
+	// Retrieve using hierarchical access
+	std::cout << "2. Retrieving alice's profile through hierarchical paths:\n\n";
+	
+	auto alice_view = store.get<akasha::Store::DatasetView>("app/users/alice");
+	if (alice_view.has_value()) {
+		auto name = alice_view->get<std::string>("name");
+		auto age = alice_view->get<int64_t>("age");
+		auto lat = alice_view->get<double>("location/latitude");
+		auto lon = alice_view->get<double>("location/longitude");
 		
-		// Verify that data is identical
-		if (*retrieved == profile) {
-			std::cout << "✓ Data integrity verified (retrieved == original)\n\n";
-		} else {
-			std::cout << "✗ Data mismatch!\n\n";
+		if (name && age && lat && lon) {
+			std::cout << "  ✓ Name: " << *name << "\n";
+			std::cout << "  ✓ Age: " << *age << "\n";
+			std::cout << "  ✓ Location: (" << *lat << ", " << *lon << ")\n\n";
 		}
-	} else {
-		std::cerr << "✗ Failed to retrieve data\n";
+	}
+	
+	// Store more users
+	std::cout << "3. Storing multiple users with different nested structures:\n\n";
+	
+	if (store.set<std::string>("app/users/bob/name", "Bob") != akasha::Status::ok ||
+	    store.set<int64_t>("app/users/bob/age", 25) != akasha::Status::ok ||
+	    store.set<double>("app/users/bob/location/latitude", 48.8566) != akasha::Status::ok ||
+	    store.set<double>("app/users/bob/location/longitude", 2.3522) != akasha::Status::ok) {
+		std::cerr << "Failed to store bob's data\n";
 		return 1;
 	}
 	
-	// We can also store just parts
-	std::cout << "Storing inner struct (User) separately:\n";
-	User bob = {1002, 25, "Bob", {48.8566, 2.3522}};  // Paris
-	auto bob_status = store.set<User>("profiles.bob.user", bob);
-	if (bob_status != akasha::Status::ok) {
-		std::cerr << "✗ Failed to store User: " << (int)bob_status << "\n";
+	if (store.set<std::string>("app/users/charlie/name", "Charlie") != akasha::Status::ok ||
+	    store.set<int64_t>("app/users/charlie/age", 35) != akasha::Status::ok ||
+	    store.set<double>("app/users/charlie/location/latitude", 35.6762) != akasha::Status::ok ||
+	    store.set<double>("app/users/charlie/location/longitude", 139.6503) != akasha::Status::ok) {
+		std::cerr << "Failed to store charlie's data\n";
 		return 1;
 	}
-	std::cout << "  bob.id = " << bob.id << "\n";
-	std::cout << "  bob.name = " << bob.name << "\n\n";
 	
-	// Y recuperar solo la parte
-	auto bob_user = store.get<User>("profiles.bob.user");
-	if (bob_user.has_value()) {
-		std::cout << "✓ Retrieved User struct\n";
-		std::cout << "  bob.id = " << bob_user->id << "\n";
-		std::cout << "  bob.home = (" << bob_user->home.latitude 
-		          << ", " << bob_user->home.longitude << ")\n\n";
+	std::cout << "  ✓ Stored bob (Paris) and charlie (Tokyo)\n\n";
+	
+	// Navigate intermediate levels
+	std::cout << "4. Navigating all users:\n\n";
+	
+	auto users_view = store.get<akasha::Store::DatasetView>("app/users");
+	if (users_view.has_value()) {
+		auto user_keys = users_view->keys();
+		std::cout << "  Found " << user_keys.size() << " users:\n";
+		for (const auto& key : user_keys) {
+			auto user_view = users_view->get<akasha::Store::DatasetView>(key);
+			if (user_view.has_value()) {
+				auto name = user_view->get<std::string>("name");
+				auto age = user_view->get<int64_t>("age");
+				if (name && age) {
+					std::cout << "    - " << *name << " (age: " << *age << ")\n";
+				}
+			}
+		}
 	}
 	
-	// We can even store just the Location
-	std::cout << "Storing innermost struct (Location) separately:\n";
-	Location tokyo = {35.6762, 139.6503};
-	auto tokyo_status = store.set<Location>("profiles.charlie.location", tokyo);
-	if (tokyo_status != akasha::Status::ok) {
-		std::cerr << "✗ Failed to store Location: " << (int)tokyo_status << "\n";
-		return 1;
-	}
-	std::cout << "  tokyo = (" << tokyo.latitude << ", " << tokyo.longitude << ")\n\n";
+	std::cout << "\n5. Direct access to nested location data:\n\n";
 	
-	auto tokyo_loc = store.get<Location>("profiles.charlie.location");
-	if (tokyo_loc.has_value()) {
-		std::cout << "✓ Retrieved Location struct\n";
-		std::cout << "  tokyo = (" << tokyo_loc->latitude 
-		          << ", " << tokyo_loc->longitude << ")\n";
+	// Access deeply nested individual values
+	auto bob_lat = store.get<double>("app/users/bob/location/latitude");
+	auto charlie_lon = store.get<double>("app/users/charlie/location/longitude");
+	
+	if (bob_lat && charlie_lon) {
+		std::cout << "  ✓ Bob's latitude: " << *bob_lat << "\n";
+		std::cout << "  ✓ Charlie's longitude: " << *charlie_lon << "\n";
 	}
 	
 	return 0;

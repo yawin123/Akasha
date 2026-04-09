@@ -70,13 +70,16 @@ TEST(performance_file_growth_steps) {
     ASSERT_EQ(size_after_create, 32 * 1024);
     
     // Insert data that fits in initial size
-    (void)store.set<std::int32_t>("test.value1", 100);
+    (void)store.set<int64_t>("test/value1", 100);
     std::size_t size_after_small_write = fs::file_size(temp.path());
     ASSERT_EQ(size_after_small_write, 32 * 1024);  // No growth needed
     
-    // Insert larger data that requires growth
-    std::string large_value(20000, 'X');  // ~20 KB
-    (void)store.set<std::string>("test.large", large_value);
+    // Insert data larger than the entire initial file (40KB > 32KB).
+    // Even with a single-allocation insert (std::move in emplace), the segment
+    // allocator cannot fit 40KB of contiguous data in a 32KB file regardless
+    // of overhead. Growth is guaranteed on the first attempt.
+    std::string large_value(40000, 'X');  // ~40 KB — exceeds entire 32 KB file
+    (void)store.set<std::string>("test/large", large_value);
     std::size_t size_after_large_write = fs::file_size(temp.path());
     
     // File should have grown by at least one step (16 KB)
@@ -102,28 +105,28 @@ TEST(performance_data_integrity_with_growth) {
     ASSERT_EQ(status, akasha::Status::ok);
     
     // Store test data
-    (void)store.set<std::int32_t>("test.count", 42);
-    (void)store.set<std::string>("test.name", "TestValue");
-    (void)store.set<bool>("test.flag", true);
+    (void)store.set<int64_t>("test/count", 42);
+    (void)store.set<std::string>("test/name", "TestValue");
+    (void)store.set<bool>("test/flag", true);
     
     // Insert large data to trigger growth
     std::string large_data(15000, 'D');  // Will require file growth
-    (void)store.set<std::string>("test.bulk", large_data);
+    (void)store.set<std::string>("test/bulk", large_data);
     
     // Verify all data is intact after growth
-    auto count = store.get<std::int32_t>("test.count");
+    auto count = store.get<int64_t>("test/count");
     ASSERT_TRUE(count.has_value());
     ASSERT_EQ(count.value(), 42);
     
-    auto name = store.get<std::string>("test.name");
+    auto name = store.get<std::string>("test/name");
     ASSERT_TRUE(name.has_value());
     ASSERT_EQ(name.value(), "TestValue");
     
-    auto flag = store.get<bool>("test.flag");
+    auto flag = store.get<bool>("test/flag");
     ASSERT_TRUE(flag.has_value());
     ASSERT_EQ(flag.value(), true);
     
-    auto bulk = store.get<std::string>("test.bulk");
+    auto bulk = store.get<std::string>("test/bulk");
     ASSERT_TRUE(bulk.has_value());
     ASSERT_EQ(bulk.value(), large_data);
     
@@ -146,9 +149,9 @@ TEST(performance_different_tunings_same_file) {
         ASSERT_EQ(status, akasha::Status::ok);
         
         // Insert initial data
-        (void)store1.set<std::int32_t>("data.session", 1);
-        (void)store1.set<std::string>("data.text", "Session1Data");
-        (void)store1.set<std::vector<int>>("data.numbers", {1, 2, 3, 4, 5});
+        (void)store1.set<int64_t>("data/session", 1);
+        (void)store1.set<std::string>("data/text", "Session1Data");
+        (void)store1.set<std::vector<int64_t>>("data/numbers", {1, 2, 3, 4, 5});
         
         (void)store1.unload("data");
     }
@@ -168,21 +171,21 @@ TEST(performance_different_tunings_same_file) {
         ASSERT_EQ(status, akasha::Status::ok);
         
         // Verify session 1 data is intact
-        auto session_num = store2.get<std::int32_t>("data.session");
+        auto session_num = store2.get<int64_t>("data/session");
         ASSERT_TRUE(session_num.has_value());
         ASSERT_EQ(session_num.value(), 1);
         
-        auto text = store2.get<std::string>("data.text");
+        auto text = store2.get<std::string>("data/text");
         ASSERT_TRUE(text.has_value());
         ASSERT_EQ(text.value(), "Session1Data");
         
-        auto numbers = store2.get<std::vector<int>>("data.numbers");
+        auto numbers = store2.get<std::vector<int64_t>>("data/numbers");
         ASSERT_TRUE(numbers.has_value());
-        ASSERT_EQ(numbers.value(), std::vector<int>({1, 2, 3, 4, 5}));
+        ASSERT_EQ(numbers.value(), std::vector<int64_t>({1, 2, 3, 4, 5}));
         
         // Add new data in session 2
-        (void)store2.set<std::int32_t>("data.session2_count", 100);
-        (void)store2.set<std::string>("data.session2_text", "NewDataFromSession2");
+        (void)store2.set<int64_t>("data/session2_count", 100);
+        (void)store2.set<std::string>("data/session2_text", "NewDataFromSession2");
         
         (void)store2.unload("data");
     }
@@ -203,29 +206,29 @@ TEST(performance_different_tunings_same_file) {
         ASSERT_EQ(status, akasha::Status::ok);
         
         // Verify ALL data from all sessions
-        auto session1 = store3.get<std::int32_t>("data.session");
+        auto session1 = store3.get<int64_t>("data/session");
         ASSERT_TRUE(session1.has_value());
         ASSERT_EQ(session1.value(), 1);
         
-        auto text1 = store3.get<std::string>("data.text");
+        auto text1 = store3.get<std::string>("data/text");
         ASSERT_TRUE(text1.has_value());
         ASSERT_EQ(text1.value(), "Session1Data");
         
-        auto numbers1 = store3.get<std::vector<int>>("data.numbers");
+        auto numbers1 = store3.get<std::vector<int64_t>>("data/numbers");
         ASSERT_TRUE(numbers1.has_value());
-        ASSERT_EQ(numbers1.value(), std::vector<int>({1, 2, 3, 4, 5}));
+        ASSERT_EQ(numbers1.value(), std::vector<int64_t>({1, 2, 3, 4, 5}));
         
-        auto session2_count = store3.get<std::int32_t>("data.session2_count");
+        auto session2_count = store3.get<int64_t>("data/session2_count");
         ASSERT_TRUE(session2_count.has_value());
         ASSERT_EQ(session2_count.value(), 100);
         
-        auto session2_text = store3.get<std::string>("data.session2_text");
+        auto session2_text = store3.get<std::string>("data/session2_text");
         ASSERT_TRUE(session2_text.has_value());
         ASSERT_EQ(session2_text.value(), "NewDataFromSession2");
         
         // Add more data in session 3
-        (void)store3.set<std::int32_t>("data.session3_count", 200);
-        (void)store3.set<std::string>("data.session3_text", "DataFromSession3");
+        (void)store3.set<int64_t>("data/session3_count", 200);
+        (void)store3.set<std::string>("data/session3_text", "DataFromSession3");
         
         (void)store3.unload("data");
     }
@@ -238,15 +241,15 @@ TEST(performance_different_tunings_same_file) {
         ASSERT_EQ(status, akasha::Status::ok);
         
         // Verify data from all 3 sessions
-        auto s1 = store4.get<std::int32_t>("data.session");
+        auto s1 = store4.get<int64_t>("data/session");
         ASSERT_TRUE(s1.has_value());
         ASSERT_EQ(s1.value(), 1);
         
-        auto s2c = store4.get<std::int32_t>("data.session2_count");
+        auto s2c = store4.get<int64_t>("data/session2_count");
         ASSERT_TRUE(s2c.has_value());
         ASSERT_EQ(s2c.value(), 100);
         
-        auto s3c = store4.get<std::int32_t>("data.session3_count");
+        auto s3c = store4.get<int64_t>("data/session3_count");
         ASSERT_TRUE(s3c.has_value());
         ASSERT_EQ(s3c.value(), 200);
         

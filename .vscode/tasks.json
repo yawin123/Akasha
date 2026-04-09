@@ -14,7 +14,7 @@
 				"cleanup",
 				"nested_data",
 				"compaction",
-				"benchmarks"
+				"json_roundtrip"
 			],
 			"default": "quickstart"
 		}
@@ -46,7 +46,7 @@
 		{
 			"label": "🔨 Compile",
 			"type": "shell",
-			"command": "cmake . -B build > /dev/null 2>&1 && cmake --build build -j",
+			"command": "cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLE=OFF -DBUILD_TESTS=OFF > /dev/null 2>&1 && cmake --build build -j",
 			"group": {
 				"kind": "build",
 				"isDefault": true
@@ -71,10 +71,10 @@
 		{
 			"label": "📦 Compile examples",
 			"type": "shell",
-			"command": "cmake . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLE=ON && cmake --build build -j",
+			"command": "cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLE=ON -DBUILD_TESTS=OFF > /dev/null 2>&1 && cmake --build build -j",
 			"group": "build",
 			"problemMatcher": "$gcc",
-			"detail": "Compiles the examples (CMAKE resets BUILD_EXAMPLE to OFF afterwards)"
+			"detail": "Compiles the examples"
 		},
 		{
 			"label": "🚀 Run example",
@@ -95,7 +95,15 @@
 		{
 			"label": "🧪 Compile and Run Tests",
 			"type": "shell",
-			"command": "cmake --build build -j && ./build/akasha_tests",
+			"command": "cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLE=OFF -DBUILD_TESTS=ON > /dev/null 2>&1 && cmake --build build -j && ./build/akasha_tests",
+			"group": "test",
+			"problemMatcher": "$gcc",
+			"detail": "Compiles tests and runs them only if compilation succeeds"
+		},
+		{
+			"label": "📊 Compile and Run Benchmarks",
+			"type": "shell",
+			"command": "cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLE=OFF -DBUILD_TESTS=OFF -DBUILD_BENCHMARKS=ON > /dev/null 2>&1 && cmake --build build -j && ./build/akasha_benchmarks",
 			"group": "test"
 		}
 	]

@@ -36,17 +36,17 @@ TEST(rootvalues_dataset_root_value_and_child_coexistence) {
     // Set root value
     (void)store.set<std::int64_t>("config", 100);
     // Set child values
-    (void)store.set<int>("config.timeout", 30);
-    (void)store.set<std::string>("config.name", "myapp");
+    (void)store.set<int64_t>("config/timeout", 30);
+    (void)store.set<std::string>("config/name", "myapp");
     // Verify root
     auto root = store.get<std::int64_t>("config");
     ASSERT_TRUE(root.has_value());
     ASSERT_EQ(root.value(), 100);
     // Verify children
-    auto timeout = store.get<int>("config.timeout");
+    auto timeout = store.get<int64_t>("config/timeout");
     ASSERT_TRUE(timeout.has_value());
     ASSERT_EQ(timeout.value(), 30);
-    auto name = store.get<std::string>("config.name");
+    auto name = store.get<std::string>("config/name");
     ASSERT_TRUE(name.has_value());
     ASSERT_STREQ(name.value(), "myapp");
 }

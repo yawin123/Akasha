@@ -9,6 +9,9 @@ void print_status(akasha::Status status) {
         case akasha::Status::invalid_key_path:
             std::cout << "✗ Invalid key path (format: dataset.key)\n";
             break;
+        case akasha::Status::invalid_file_path:
+            std::cout << "✗ Invalid file path\n";
+            break;
         case akasha::Status::key_conflict:
             std::cout << "✗ Key conflict (hierarchy mismatch)\n";
             break;
@@ -30,8 +33,17 @@ void print_status(akasha::Status status) {
         case akasha::Status::dataset_not_found:
             std::cout << "✗ Dataset not found\n";
             break;
+        case akasha::Status::key_not_found:
+            std::cout << "✗ Key not found\n";
+            break;
         case akasha::Status::source_already_loaded:
             std::cout << "✗ Source already loaded\n";
+            break;
+        case akasha::Status::incompatible_format:
+            std::cout << "✗ Incompatible file format\n";
+            break;
+        case akasha::Status::type_error:
+            std::cout << "✗ Type error (value overflow, range mismatch)\n";
             break;
     }
 }
@@ -60,7 +72,7 @@ int main() {
     
     // Successful operation
     std::cout << "\nSetting valid key:\n";
-    status = store.set<int64_t>("config.timeout", 30);
+    status = store.set<int64_t>("config/timeout", 30);
     print_status(status);
     std::cout << "Last status: ";
     print_status(store.last_status());
