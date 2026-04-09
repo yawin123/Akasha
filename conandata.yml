@@ -1,0 +1,7 @@
+sources:
+  simple-test-framework:
+    url: "https://git.yawin.es/personal/simple-test-framework.git"
+    type: "git"
+  simple-benchmark-framework:
+    url: "https://git.yawin.es/personal/simple-benchmark-framework.git"
+    type: "git"

@@ -99,10 +99,13 @@ int main() {
 
     // Insert small values
     std::cout << "Inserting configuration values...\n";
-    store.set<std::int32_t>("settings.app.max_connections", 100);
-    store.set<std::int32_t>("settings.app.timeout_seconds", 30);
-    store.set<std::string>("settings.app.log_level", "INFO");
-    store.set<bool>("settings.app.enable_cache", true);
+    if (store.set<std::int64_t>("settings/app/max_connections", 100) != akasha::Status::ok ||
+        store.set<std::int64_t>("settings/app/timeout_seconds", 30) != akasha::Status::ok ||
+        store.set<std::string>("settings/app/log_level", "INFO") != akasha::Status::ok ||
+        store.set<bool>("settings/app/enable_cache", true) != akasha::Status::ok) {
+        std::cerr << "Failed to set configuration parameters\n";
+        return 1;
+    }
 
     std::cout << "After small inserts: " << fs::file_size(db_path) / 1024 << " KB\n";
 
@@ -110,12 +113,14 @@ int main() {
     std::cout << "Inserting larger data (will trigger file growth)...\n";
     std::string large_value(2048, 'X');  // 2 KB string
     for (int i = 0; i < 5; ++i) {
-        auto key = "settings.data.chunk_" + std::to_string(i);
+        auto key = "settings/data/chunk_" + std::to_string(i);
         store.set<std::string>(key, large_value);
         std::cout << "  After chunk " << i << ": " << fs::file_size(db_path) / 1024 << " KB\n";
     }
 
-    store.unload("settings");
+    if (store.unload("settings") != akasha::Status::ok) {
+        std::cerr << "Warning: Failed to unload\n";
+    }
 
     std::cout << "\n✓ Final file size: " << fs::file_size(db_path) / 1024 << " KB\n";
     std::cout << "\nNotice how the file grew in steps according to initial_grow_step.\n";

@@ -67,13 +67,13 @@ int main() {
 	//      └─ pool_size
 	
 	std::cout << "Creating nested structure:\n";
-	auto s1 = store.set<std::string>("settings.server.host", "localhost");
-	auto s2 = store.set<int64_t>("settings.server.port", 8080);
-	auto s3 = store.set<int64_t>("settings.server.timeout", 30);
+	auto s1 = store.set<std::string>("settings/server/host", "localhost");
+	auto s2 = store.set<int64_t>("settings/server/port", 8080);
+	auto s3 = store.set<int64_t>("settings/server/timeout", 30);
 	
-	auto s4 = store.set<std::string>("settings.database.host", "db.example.com");
-	auto s5 = store.set<int64_t>("settings.database.port", 5432);
-	auto s6 = store.set<int64_t>("settings.database.pool_size", 10);
+	auto s4 = store.set<std::string>("settings/database/host", "db.example.com");
+	auto s5 = store.set<int64_t>("settings/database/port", 5432);
+	auto s6 = store.set<int64_t>("settings/database/pool_size", 10);
 	
 	bool all_ok = (s1 == akasha::Status::ok && s2 == akasha::Status::ok && 
 	               s3 == akasha::Status::ok && s4 == akasha::Status::ok &&
@@ -89,29 +89,29 @@ int main() {
 	
 	// Check existence with has()
 	std::cout << "=== Checking existence with has() ===\n";
-	std::cout << "  has(\"settings.server.host\") = " 
-		<< (store.has("settings.server.host") ? "true" : "false") << "\n";
-	std::cout << "  has(\"settings.server.port\") = " 
-		<< (store.has("settings.server.port") ? "true" : "false") << "\n";
-	std::cout << "  has(\"settings.cache.key\") = " 
-		<< (store.has("settings.cache.key") ? "true" : "false") << "\n\n";
+	std::cout << "  has(\"settings/server/host\") = " 
+		<< (store.has("settings/server/host") ? "true" : "false") << "\n";
+	std::cout << "  has(\"settings/server/port\") = " 
+		<< (store.has("settings/server/port") ? "true" : "false") << "\n";
+	std::cout << "  has(\"settings/cache/key\") = " 
+		<< (store.has("settings/cache/key") ? "true" : "false") << "\n\n";
 	
 	// Read values with get() - direct navigation
 	std::cout << "=== Reading with get() ===\n\n";
 	
 	std::cout << "Server configuration:\n";
-	auto host = store.get<std::string>("settings.server.host");
-	auto port = store.get<int64_t>("settings.server.port");
-	auto timeout = store.get<int64_t>("settings.server.timeout");
+	auto host = store.get<std::string>("settings/server/host");
+	auto port = store.get<int64_t>("settings/server/port");
+	auto timeout = store.get<int64_t>("settings/server/timeout");
 	
 	std::cout << "  host     = " << host.value_or("N/A") << "\n";
 	std::cout << "  port     = " << port.value_or(0) << "\n";
 	std::cout << "  timeout  = " << timeout.value_or(0) << "\n\n";
 	
 	std::cout << "Database configuration:\n";
-	auto db_host = store.get<std::string>("settings.database.host");
-	auto db_port = store.get<int64_t>("settings.database.port");
-	auto pool_size = store.get<int64_t>("settings.database.pool_size");
+	auto db_host = store.get<std::string>("settings/database/host");
+	auto db_port = store.get<int64_t>("settings/database/port");
+	auto pool_size = store.get<int64_t>("settings/database/pool_size");
 	
 	std::cout << "  host      = " << db_host.value_or("N/A") << "\n";
 	std::cout << "  port      = " << db_port.value_or(0) << "\n";
@@ -121,20 +121,20 @@ int main() {
 	std::cout << "=== Listing keys with DatasetView::keys() ===\n\n";
 	
 	// See what's in each branch using a view
-	auto server_view = store.get<akasha::Store::DatasetView>("settings.server");
+	auto server_view = store.get<akasha::Store::DatasetView>("settings/server");
 	if (server_view.has_value()) {
 		auto server_keys = server_view->keys();
-		std::cout << "Keys in 'settings.server':\n";
+		std::cout << "Keys in 'settings/server':\n";
 		for (const auto& key : server_keys) {
 			std::cout << "  - " << key << "\n";
 		}
 		std::cout << "\n";
 	}
 	
-	auto database_view = store.get<akasha::Store::DatasetView>("settings.database");
+	auto database_view = store.get<akasha::Store::DatasetView>("settings/database");
 	if (database_view.has_value()) {
 		auto db_keys = database_view->keys();
-		std::cout << "Keys in 'settings.database':\n";
+		std::cout << "Keys in 'settings/database':\n";
 		for (const auto& key : db_keys) {
 			std::cout << "  - " << key << "\n";
 		}
@@ -154,7 +154,7 @@ int main() {
 			
 			// Get content of each branch
 			auto branch_view = store.get<akasha::Store::DatasetView>(
-				std::string("settings.") + branch
+				std::string("settings/") + branch
 			);
 			if (branch_view.has_value()) {
 				auto branch_keys = branch_view->keys();
@@ -162,7 +162,7 @@ int main() {
 					const auto& is_last = (i == branch_keys.size() - 1);
 					const auto& key = branch_keys[i];
 					std::cout << "  │  " << (is_last ? "└─" : "├─") << " " << key;
-					print_value(store, std::string("settings.") + branch + "." + key);
+				print_value(store, std::string("settings/") + branch + "/" + key);
 					std::cout << "\n";
 				}
 			}
