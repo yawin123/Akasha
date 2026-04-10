@@ -98,7 +98,7 @@ namespace akasha {
         static void serialize(const T& v, BatchWriter& bw) {
             std::size_t i = 0;
             for (const auto& elem : v) {
-                (void)bw.set(std::to_string(i++), elem);
+                (void)bw.set(std::to_string(i++), static_cast<ElementType>(elem));
             }
         }
 
