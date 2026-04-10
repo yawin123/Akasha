@@ -131,7 +131,7 @@ concept IsSequentialSerializable = requires {
     typename std::void_t<decltype(&SequentialSerializable<T>::serialize)>;
     typename std::void_t<decltype(&SequentialSerializable<T>::deserialize)>;
     typename std::void_t<decltype(&SequentialSerializable<T>::size)>;
-};
+} && !std::is_same_v<T, std::string>;
 
 template<typename T>
 concept IsArbitrarySerializable = requires {

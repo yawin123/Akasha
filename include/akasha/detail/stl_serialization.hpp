@@ -84,12 +84,13 @@ namespace akasha {
     template <typename T>
     struct has_tuple_size<T, std::void_t<decltype(std::tuple_size<T>::value)>> : std::true_type {};
 
-    // Especialización genérica: iterable, no mapa, no array (tamaño fijo)
+    // Especialización genérica: iterable, no mapa, no array (tamaño fijo), no string
     template <typename T>
     struct SequentialSerializable<T, std::enable_if_t<
         is_iterable_v<T> &&
         !has_mapped_type<T>::value &&
-        !has_tuple_size<T>::value
+        !has_tuple_size<T>::value &&
+        !std::is_same_v<T, std::string>
     >> {
         using ElementType = typename T::value_type;
 
