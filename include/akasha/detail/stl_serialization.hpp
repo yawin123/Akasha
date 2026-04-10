@@ -56,6 +56,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <iterator>
 
 namespace akasha {
     // Type Traits ---
