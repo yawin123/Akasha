@@ -69,10 +69,14 @@ struct EncodedScalar {
     std::vector<char> buf(sizeof(std::size_t) + v.size());
     const std::size_t len = v.size();
     std::memcpy(buf.data(), &len, sizeof(std::size_t));
+#ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
     if (len > 0) std::memcpy(buf.data() + sizeof(std::size_t), v.data(), len);
+#ifdef __GNUC__
 #pragma GCC diagnostic pop
+#endif
     return buf;
 }
 

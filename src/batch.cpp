@@ -127,7 +127,7 @@ std::optional<std::string_view> BatchReader::get_raw(std::string_view relative_k
 }
 
 std::vector<std::string> BatchReader::get_children() const {
-    auto s = get<std::string>("__children__");
+    auto s = get<std::string>(std::string_view("__children__"));
     if (!s || s->empty()) return {};
     std::vector<std::string> result;
     std::string_view sv = *s;
