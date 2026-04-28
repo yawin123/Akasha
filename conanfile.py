@@ -27,7 +27,7 @@ class AkashaConan(ConanFile):
     generators = "CMakeDeps", "CMakeToolchain"
 
     def requirements(self):
-        self.requires("boost/1.84.0")
+        self.requires("boost/1.90.0")
     
     def generate(self):
         conandata_file = os.path.join(self.recipe_folder, "conandata.yml")

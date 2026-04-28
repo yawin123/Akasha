@@ -350,26 +350,38 @@ BENCHMARK_REGISTER_FULL(write_serializable_point_100k, nullptr, write_serializab
 // ============================================================================
 // Benchmark 9: Simple serializable reads
 // ============================================================================
-void read_serializable_point_it_setup(sbf::Benchmark& bm, int nkeys) {
+void read_serializable_point_setup(sbf::Benchmark& bm, int nkeys) {
     auto ctx = new ScalarCtx();
     (void)ctx->store.load("bench", ctx->temp.path(), akasha::FileOptions::create_if_missing);
 
     // Pre-populate
     for (size_t i = 0; i < nkeys; ++i) {
+        bm.set_progress("Setting up", i, nkeys);
         Point p{static_cast<double>(i), static_cast<double>(i) * 2, static_cast<double>(i) * 3};
         (void)ctx->store.set<Point>("bench/point/" + std::to_string(i), p);
     }
+    bm.set_progress("Setting up", nkeys, nkeys);
 
-    bm.set_local_context(ctx);
+    (void)ctx->store.unload("bench");
+    
+    bm.set_context(ctx);
 }
-void read_serializable_point_it_setup_1000(sbf::Benchmark& bm) {
-    read_serializable_point_it_setup(bm, 1000);
+void read_serializable_point_setup_1000(sbf::Benchmark& bm) {
+    read_serializable_point_setup(bm, 1000);
 }
-void read_serializable_point_it_setup_10000(sbf::Benchmark& bm) {
-    read_serializable_point_it_setup(bm, 10000);
+void read_serializable_point_setup_10000(sbf::Benchmark& bm) {
+    read_serializable_point_setup(bm, 10000);
 }
-void read_serializable_point_it_setup_100000(sbf::Benchmark& bm) {
-    read_serializable_point_it_setup(bm, 100000);
+void read_serializable_point_setup_100000(sbf::Benchmark& bm) {
+    read_serializable_point_setup(bm, 100000);
+}
+void read_serializable_point_it_setup(sbf::Benchmark& bm) {
+    auto& ctx = bm.get_context<ScalarCtx*>();
+    auto local_ctx = new ScalarCtx();
+
+    local_ctx->temp = TempFile(ctx->temp);
+    (void)local_ctx->store.load("bench", local_ctx->temp.path());
+    bm.set_local_context(local_ctx);
 }
 void read_serializable_point_run(sbf::Benchmark& bm, int nkeys) {
     auto& ctx = bm.get_local_context<ScalarCtx*>();
@@ -395,10 +407,14 @@ void read_serializable_point_it_teardown(sbf::Benchmark& bm) {
     (void)ctx->store.unload("bench");
     delete ctx;
 }
+void read_serializable_point_teardown(sbf::Benchmark& bm) {
+    auto& ctx = bm.get_context<ScalarCtx*>();
+    delete ctx;
+}
 
-BENCHMARK_REGISTER_FULL(read_serializable_point_1k, nullptr, read_serializable_point_it_setup_1000, read_serializable_point_run_1000, read_serializable_point_it_teardown, nullptr);
-BENCHMARK_REGISTER_FULL(read_serializable_point_10k, nullptr, read_serializable_point_it_setup_10000, read_serializable_point_run_10000, read_serializable_point_it_teardown, nullptr);
-BENCHMARK_REGISTER_FULL(read_serializable_point_100k, nullptr, read_serializable_point_it_setup_100000, read_serializable_point_run_100000, read_serializable_point_it_teardown, nullptr);
+BENCHMARK_REGISTER_FULL(read_serializable_point_1k, read_serializable_point_setup_1000, read_serializable_point_it_setup, read_serializable_point_run_1000, read_serializable_point_it_teardown, read_serializable_point_teardown);
+BENCHMARK_REGISTER_FULL(read_serializable_point_10k, read_serializable_point_setup_10000, read_serializable_point_it_setup, read_serializable_point_run_10000, read_serializable_point_it_teardown, read_serializable_point_teardown);
+BENCHMARK_REGISTER_FULL(read_serializable_point_100k, read_serializable_point_setup_100000, read_serializable_point_it_setup, read_serializable_point_run_100000, read_serializable_point_it_teardown, read_serializable_point_teardown);
 
 // ============================================================================
 // Benchmark 10: Complex serializable writes
@@ -524,7 +540,10 @@ int main() {
     sbf::Runner runner;
     auto results = runner.set_default_iterations(10)
                          .set_default_warmup(0)
-                         .set_default_threads(1)
+                         .set_default_threads(32)
+                         //.add("read_serializable_point_1k")
+                         //.add("read_serializable_point_10k")
+                         //.add("read_serializable_point_100k")
                          .add_all()
                          .run();
 
