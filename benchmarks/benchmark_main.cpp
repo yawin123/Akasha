@@ -536,16 +536,94 @@ BENCHMARK_REGISTER_FULL(read_complex_serializable_100k, read_complex_serializabl
 // ============================================================================
 // Main: Run all benchmarks
 // ============================================================================
-int main() {
+int main(int argc, char* argv[]) {
+    // ---- Argument parsing ----
+    // Flags:   --iterations=N  / -i=N
+    //          --warmup=N      / -w=N
+    //          --threads=N     / -t=N
+    //          --progress=BOOL / -p=BOOL  (true/false/1/0)
+    //          --list          → imprime benchmarks disponibles y sale
+    //          --help          → imprime uso y sale
+    // Resto de argumentos: filtros de nombre (substring)
+
+    int    opt_iterations = 10;
+    int    opt_warmup     = 0;
+    int    opt_threads    = 1;
+    bool   opt_progress   = true;
+    std::vector<std::string> filters;
+
+    auto parse_int = [](const std::string& s) { return std::stoi(s); };
+    auto parse_bool = [](const std::string& s) -> bool {
+        return s == "true" || s == "1";
+    };
+    // Returns the value part after '=' if the arg matches the given key prefix,
+    // e.g. arg="--iterations=5", key="--iterations" → "5"
+    auto match_flag = [](const std::string& arg, const std::string& key) -> std::string {
+        if (arg.size() > key.size() && arg.substr(0, key.size()) == key && arg[key.size()] == '=')
+            return arg.substr(key.size() + 1);
+        return {};
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == "--list" || arg == "-l") {
+            auto names = sbf::Registry::instance().list();
+            std::cout << "Benchmarks disponibles (" << names.size() << "):\n";
+            for (const auto& name : names) std::cout << "  " << name << "\n";
+            return 0;
+        }
+        if (arg == "--help" || arg == "-h") {
+            std::cout <<
+                "Uso: akasha_benchmarks [opciones] [filtro...]\n"
+                "\n"
+                "Opciones:\n"
+                "  -i, --iterations=<iterations>       Iteraciones por benchmark     (default: 10)\n"
+                "  -w, --warmup=<warmup iterations>    Iteraciones de calentamiento  (default: 0)\n"
+                "  -t, --threads=<threads>             Hilos de ejecución            (default: 1)\n"
+                "  -p, --progress=[true/false]         Mostrar progreso              (default: true)\n"
+                "  -l, --list                          Lista todos los benchmarks disponibles\n"
+                "  -h, --help                          Muestra esta ayuda\n"
+                "\n"
+                "Filtros: substrings del nombre del benchmark (se combinan con OR).\n"
+                "Sin filtros se ejecutan todos.\n";
+            return 0;
+        }
+
+        std::string val;
+        if (!(val = match_flag(arg, "--iterations")).empty() || !(val = match_flag(arg, "-i")).empty())
+            opt_iterations = parse_int(val);
+        else if (!(val = match_flag(arg, "--warmup")).empty() || !(val = match_flag(arg, "-w")).empty())
+            opt_warmup = parse_int(val);
+        else if (!(val = match_flag(arg, "--threads")).empty() || !(val = match_flag(arg, "-t")).empty())
+            opt_threads = parse_int(val);
+        else if (!(val = match_flag(arg, "--progress")).empty() || !(val = match_flag(arg, "-p")).empty())
+            opt_progress = parse_bool(val);
+        else
+            filters.push_back(arg);
+    }
+
+    // ---- Runner setup ----
     sbf::Runner runner;
-    auto results = runner.set_default_iterations(10)
-                         .set_default_warmup(0)
-                         .set_default_threads(32)
-                         //.add("read_serializable_point_1k")
-                         //.add("read_serializable_point_10k")
-                         //.add("read_serializable_point_100k")
-                         .add_all()
-                         .run();
+    runner.set_default_iterations(opt_iterations)
+          .set_default_warmup(opt_warmup)
+          .set_default_threads(opt_threads)
+          .set_default_progress(opt_progress);
+
+    if (filters.empty()) {
+        runner.add_all();
+    } else {
+        for (const auto& name : sbf::Registry::instance().list()) {
+            for (const auto& filter : filters) {
+                if (name.find(filter) != std::string::npos) {
+                    runner.add(name);
+                    break;
+                }
+            }
+        }
+    }
+
+    auto results = runner.run();
 
     // Print results using default console reporter
     sbf::reporters::ConsoleReporter{}.report(results, std::cout);  

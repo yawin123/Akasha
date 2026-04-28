@@ -7,9 +7,9 @@
 #include "akasha.hpp"
 
 #include <filesystem>
-#include <cstring>
-#include <random>
+#include <atomic>
 #include <string>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
 
@@ -22,10 +22,9 @@ private:
 
     // Helper to generate a unique filename
     static std::string generate_unique_path(const std::string& suffix) {
-        static std::random_device rd;
-        static std::mt19937 gen(rd());
-        static std::uniform_int_distribution<> dis(0, 999999);
-        return "/tmp/akasha_benchmark_" + std::to_string(dis(gen)) + suffix;
+        static std::atomic<int> counter{0};
+        return "/tmp/akasha_benchmark_" + std::to_string(getpid())
+               + "_" + std::to_string(counter++) + suffix;
     }
 
 public:
