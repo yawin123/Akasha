@@ -24,11 +24,12 @@
 #include "akasha/core.hpp"
 #include "akasha/detail/type_conversion.hpp"
 
+#include "akasha/detail/mutex.hpp"
+
 #include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -472,7 +473,7 @@ private:
 		std::string id;
 		std::string file_path;
 		std::shared_ptr<MappedFileStorage> storage;
-		std::shared_ptr<std::shared_mutex> file_lock;
+		std::shared_ptr<detail::FileLockMutex> file_lock;
 		void* dataset_map{nullptr};
 		Store* store{nullptr};
 	};
@@ -494,7 +495,7 @@ private:
 	[[nodiscard]] bool has_subkeys_no_lock(const Source* source, std::string_view subkey_prefix) const;
 	[[nodiscard]] std::vector<std::string> get_subkeys_no_lock(const Source* source, std::string_view subkey_prefix) const;
 	void clear_no_lock(Source* source, std::string_view subkey);
-	[[nodiscard]] std::shared_ptr<std::shared_mutex> get_or_create_file_lock(const std::string& file_path) const;
+	[[nodiscard]] std::shared_ptr<detail::FileLockMutex> get_or_create_file_lock(const std::string& file_path) const;
 	[[nodiscard]] bool grow_and_remap_sources_for_path(const std::string& file_path, std::size_t grow_by_bytes);
 	[[nodiscard]] bool shrink_and_remap_sources_for_path(const std::string& file_path);
 	[[nodiscard]] bool compact_and_remap_sources_for_path(const std::string& file_path);
@@ -512,9 +513,9 @@ private:
 	[[nodiscard]] Status migrate(std::shared_ptr<MappedFileStorage>& storage, uint32_t current_version);
 
 	std::vector<Source> sources_;
-	mutable std::shared_mutex sources_mutex_;
+	mutable detail::FileLockMutex sources_mutex_;
 	mutable std::mutex file_locks_mutex_;
-	mutable std::unordered_map<std::string, std::shared_ptr<std::shared_mutex>> file_locks_;
+	mutable std::unordered_map<std::string, std::shared_ptr<detail::FileLockMutex>> file_locks_;
 	std::atomic<std::size_t> initial_mapped_file_size_{64 * 1024};
 	std::atomic<std::size_t> initial_grow_step_{(64 * 1024) / 2};
 	std::atomic<int> max_grow_retries_{8};

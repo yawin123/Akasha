@@ -135,7 +135,7 @@ Status Store::last_status() const noexcept {
 
 // ── File locks ───────────────────────────────────────────────────────────────
 
-std::shared_ptr<std::shared_mutex> Store::get_or_create_file_lock(const std::string& file_path) const {
+std::shared_ptr<detail::FileLockMutex> Store::get_or_create_file_lock(const std::string& file_path) const {
     std::lock_guard<std::mutex> guard(file_locks_mutex_);
 
     const auto it = file_locks_.find(file_path);
@@ -143,7 +143,7 @@ std::shared_ptr<std::shared_mutex> Store::get_or_create_file_lock(const std::str
         return it->second;
     }
 
-    auto file_lock = std::make_shared<std::shared_mutex>();
+    auto file_lock = std::make_shared<detail::FileLockMutex>();
     file_locks_.emplace(file_path, file_lock);
     return file_lock;
 }
@@ -165,7 +165,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, FileO
     }
 
     const std::string path{file_path};
-    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     if (find_source(source_id) != nullptr) {
         return last_status_ = Status::key_conflict;
@@ -189,7 +189,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, FileO
         }
     }
 
-    std::unique_lock<std::shared_mutex> write_guard(*file_lock);
+    std::unique_lock<detail::FileLockMutex> write_guard(*file_lock);
 
     std::shared_ptr<MappedFileStorage> storage;
     try {
@@ -256,7 +256,7 @@ Status Store::load(std::string_view source_id, std::string_view file_path, FileO
 // ── unload ───────────────────────────────────────────────────────────────────
 
 Status Store::unload(std::string_view source_id) {
-    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     auto source_it = std::find_if(sources_.begin(), sources_.end(), 
         [source_id](const Source& source) {
@@ -268,7 +268,7 @@ Status Store::unload(std::string_view source_id) {
     }
 
     if (source_it->file_lock) {
-        std::unique_lock<std::shared_mutex> file_guard(*source_it->file_lock);
+        std::unique_lock<detail::FileLockMutex> file_guard(*source_it->file_lock);
         source_it->dataset_map = nullptr;
         source_it->storage = nullptr;
         source_it->file_lock = nullptr;

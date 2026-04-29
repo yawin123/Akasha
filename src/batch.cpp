@@ -1,6 +1,7 @@
 #include "store_internal.hpp"
 
 #include <format>
+#include <shared_mutex>
 #include <string>
 
 namespace akasha {
@@ -16,7 +17,7 @@ BatchStruct::BatchStruct(const Store& store, std::string_view key_prefix) : stor
 
     // Acquire sources_mutex (shared) + find source + acquire file lock (exclusive)
     {
-        std::shared_lock<std::shared_mutex> sources_guard(store_.sources_mutex_);
+        std::shared_lock<detail::FileLockMutex> sources_guard(store_.sources_mutex_);
         source_ = const_cast<Store::Source*>(store_.find_source(dataset_id_));
         lock();
         // sources_guard released here — fine, we hold the file_lock which
@@ -34,7 +35,7 @@ void BatchStruct::pop_key() const {
 
 void BatchStruct::lock() {
     if (!file_lock_ && source_ && source_->file_lock) {
-        file_lock_ = std::unique_lock<std::shared_mutex>(*source_->file_lock);
+        file_lock_ = std::unique_lock<detail::FileLockMutex>(*source_->file_lock);
         OnLockAcquired();
     }
 }
@@ -74,11 +75,8 @@ std::vector<std::string> BatchStruct::keys() const {
 BatchWriter::BatchWriter(const Store& store, std::string_view key_prefix) : BatchStruct(store, key_prefix) {}
 
 BatchWriter::~BatchWriter() noexcept {
-    if(file_lock_ && !committed_) {
-        // Best-effort flush
-        (void)store_.flush_source(source_);
-    }
     // unique_lock destructor releases the file lock automatically
+    // The kernel flushes dirty pages to disk on munmap — no explicit msync needed here.
 }
 
 Status BatchWriter::set_raw(std::string_view relative_key, const void* bytes, std::size_t size, detail::TypeTag tag) {
@@ -101,10 +99,8 @@ void BatchWriter::clear_children() {
 Status BatchWriter::commit() {
     if (!file_lock_ || committed_ || source_ == nullptr)  return Status::file_write_error;
 
-    const Status st = store_.flush_source(source_) ? Status::ok : Status::file_write_error;
-
-    unlock();  // release lock after flush attempt
-    return st;
+    unlock();  // release lock; kernel handles dirty page writeback on munmap/unload
+    return Status::ok;
 }
 
 void BatchWriter::OnLockAcquired() {

@@ -43,6 +43,8 @@ class AkashaConan(ConanFile):
                                 self.output.info(f"Clonando {name}...")
                                 git = Git(self)
                                 git.clone(config["url"], target=git_path)
+                                git_sub = Git(self, folder=git_path)
+                                git_sub.run("submodule update --init --recursive")
     
     def layout(self):
         # Keep generators in root of output folder (which is build/)

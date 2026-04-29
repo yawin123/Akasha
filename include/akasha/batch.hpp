@@ -26,10 +26,10 @@
  */
 
 #include "akasha/core.hpp"
+#include "akasha/detail/mutex.hpp"
 #include "akasha/detail/type_conversion.hpp"
 
 #include <optional>
-#include <shared_mutex>
 #include <stack>
 #include <string>
 #include <string_view>
@@ -53,7 +53,7 @@ protected:
     Store& store_;
     Store::Source* source_{nullptr};
     std::string dataset_id_;
-    std::unique_lock<std::shared_mutex> file_lock_;
+    std::unique_lock<detail::FileLockMutex> file_lock_;
     mutable std::stack<std::string> key_stack_;
 
     virtual void OnLockAcquired() {}

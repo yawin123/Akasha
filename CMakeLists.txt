@@ -7,6 +7,7 @@ option(BUILD_EXAMPLE "Build example application" OFF)
 option(BUILD_TESTS "Build test suite" OFF)
 option(BUILD_BENCHMARKS "Build benchmark suite" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
+option(AKASHA_SINGLE_THREAD "Replace all mutexes with no-op locks (faster, single-thread only — unsafe for concurrent access)" OFF)
 
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
@@ -36,6 +37,7 @@ target_compile_features(akasha PUBLIC cxx_std_23)
 target_compile_definitions(akasha
     PUBLIC
         AKASHA_VERSION="${CMAKE_PROJECT_VERSION}"
+        $<$<BOOL:${AKASHA_SINGLE_THREAD}>:AKASHA_SINGLE_THREAD>
 )
 
 target_link_libraries(akasha 
@@ -115,7 +117,7 @@ if(BUILD_BENCHMARKS)
     # Benchmark suite using SBF (Simple Benchmark Framework)
     add_executable(akasha_benchmarks benchmarks/benchmark_main.cpp)
     target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
-    target_include_directories(akasha_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include)
+    target_include_directories(akasha_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include/scf/include)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)

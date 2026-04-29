@@ -97,7 +97,7 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
 
     const auto& [dataset_id, subkey] = key_parts.value();
 
-    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::shared_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     Source* source = find_source(dataset_id);
     if (source == nullptr) {
@@ -108,7 +108,7 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
         return last_status_ = Status::file_write_error;
     }
 
-    std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
+    std::unique_lock<detail::FileLockMutex> write_guard(*source->file_lock);
 
     if (!source->dataset_map || !source->storage) {
         return last_status_ = Status::file_write_error;
@@ -117,10 +117,6 @@ Status Store::set_bytes_impl(std::string_view key_path, const void* bytes, std::
     const Status st = set_bytes_no_lock(source, dataset_id, subkey, bytes, size, tag);
     if (st != Status::ok) {
         return last_status_ = st;
-    }
-
-    if (!source->storage->file.flush()) {
-        return last_status_ = Status::file_write_error;
     }
 
     return last_status_ = Status::ok;
@@ -159,7 +155,7 @@ std::optional<std::string_view> Store::get_bytes_impl(std::string_view key_path)
 
     const auto& [dataset_id, subkey] = key_parts.value();
 
-    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::shared_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     const Source* source = find_source(dataset_id);
     if (source == nullptr) {
@@ -172,7 +168,7 @@ std::optional<std::string_view> Store::get_bytes_impl(std::string_view key_path)
         return std::nullopt;
     }
 
-    std::shared_lock<std::shared_mutex> read_guard(*source->file_lock);
+    std::shared_lock<detail::FileLockMutex> read_guard(*source->file_lock);
 
     if (!source->dataset_map || !source->storage) {
         last_status_ = Status::file_read_error;
@@ -189,7 +185,7 @@ bool Store::has(std::string_view key_path) const {
     if (!key_parts.has_value()) return false;
     const auto& [dataset_id, subkey] = key_parts.value();
 
-    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::shared_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
     const Source* source = find_source(dataset_id);
     if (!source || !source->file_lock) return false;
 
@@ -197,7 +193,7 @@ bool Store::has(std::string_view key_path) const {
         return true;
     }
 
-    std::shared_lock<std::shared_mutex> file_guard(*source->file_lock);
+    std::shared_lock<detail::FileLockMutex> file_guard(*source->file_lock);
     return has_key_no_lock(source, subkey);
 }
 
@@ -276,21 +272,26 @@ std::vector<std::string> Store::get_subkeys_no_lock(const Source* source, std::s
 void Store::clear_no_lock(Source* source, std::string_view subkey) {
     if (!source || !source->dataset_map || !source->storage) return;
     auto* map = as_dataset_map(source->dataset_map);
-    const std::string prefix_with_slash = std::string(subkey) + '/';
-    for (auto it = map->begin(); it != map->end();) {
-        const std::string_view current_key(it->first.c_str(), it->first.size());
-        if (current_key == subkey || current_key.starts_with(prefix_with_slash)) {
-            it = map->erase(it);
-        } else {
-            ++it;
-        }
+
+    // Erase the exact key (leaf node), if present
+    {
+        auto it = map->find(subkey);
+        if (it != map->end()) map->erase(it);
+    }
+
+    // Erase all "subkey/..." children using lower_bound — O(k·log n) instead of O(n).
+    // The map is ordered, so all matching keys are contiguous after the prefix.
+    const std::string prefix = std::string(subkey) + '/';
+    for (auto it = map->lower_bound(prefix); it != map->end();) {
+        if (!std::string_view(it->first.c_str(), it->first.size()).starts_with(prefix)) break;
+        it = map->erase(it);
     }
 }
 
 // ── clear ────────────────────────────────────────────────────────────────────
 
 Status Store::clear(std::string_view key_path) {
-    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     if (key_path.empty()) {
         std::unordered_set<std::string> processed_paths;
@@ -304,7 +305,7 @@ Status Store::clear(std::string_view key_path) {
                 continue;
             }
 
-            std::unique_lock<std::shared_mutex> write_guard(*source.file_lock);
+            std::unique_lock<detail::FileLockMutex> write_guard(*source.file_lock);
             auto* map = as_dataset_map(source.dataset_map);
             map->clear();
 
@@ -335,7 +336,7 @@ Status Store::clear(std::string_view key_path) {
         return last_status_ = Status::file_write_error;
     }
 
-    std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
+    std::unique_lock<detail::FileLockMutex> write_guard(*source->file_lock);
     auto* map = as_dataset_map(source->dataset_map);
 
     if (subkey == std::string_view("__root__")) {

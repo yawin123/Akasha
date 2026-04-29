@@ -287,7 +287,7 @@ bool Store::compact_and_remap_sources_for_path(const std::string& file_path) {
 // ── compact ──────────────────────────────────────────────────────────────────
 
 Status Store::compact(std::string_view dataset_id) {
-    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     if (dataset_id.empty()) {
         std::unordered_set<std::string> processed_paths;
@@ -301,7 +301,7 @@ Status Store::compact(std::string_view dataset_id) {
                 continue;
             }
 
-            std::unique_lock<std::shared_mutex> write_guard(*source.file_lock);
+            std::unique_lock<detail::FileLockMutex> write_guard(*source.file_lock);
             if (!compact_and_remap_sources_for_path(source.file_path)) {
                 return last_status_ = Status::file_write_error;
             }
@@ -319,7 +319,7 @@ Status Store::compact(std::string_view dataset_id) {
         return last_status_ = Status::file_write_error;
     }
 
-    std::unique_lock<std::shared_mutex> write_guard(*source->file_lock);
+    std::unique_lock<detail::FileLockMutex> write_guard(*source->file_lock);
     if (!compact_and_remap_sources_for_path(source->file_path)) {
         return last_status_ = Status::file_write_error;
     }

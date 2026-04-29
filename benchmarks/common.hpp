@@ -16,6 +16,8 @@ namespace fs = std::filesystem;
 /**
  * @brief Temporary file RAII wrapper for benchmarks
  */
+
+constexpr const char* tmpPath = "./tmp";
 class TempFile {
 private:
     std::string m_path;
@@ -23,8 +25,7 @@ private:
     // Helper to generate a unique filename
     static std::string generate_unique_path(const std::string& suffix) {
         static std::atomic<int> counter{0};
-        return "/tmp/akasha_benchmark_" + std::to_string(getpid())
-               + "_" + std::to_string(counter++) + suffix;
+		return std::format("{}/akasha_benchmark_{}_{}{}", tmpPath, getpid(), counter++, suffix);
     }
 
 public:
@@ -36,6 +37,11 @@ public:
         if (fs::exists(m_path)) {
             fs::remove(m_path);
         }
+
+		// Ensure the temp directory exists
+		if (!fs::exists(tmpPath)) {
+			fs::create_directory(tmpPath);
+		}
     }
 
     // Constructor that copies another TempFile
@@ -46,6 +52,11 @@ public:
         if (fs::exists(m_path)) {
             fs::remove(m_path);
         }
+
+		// Ensure the temp directory exists
+		if (!fs::exists(tmpPath)) {
+			fs::create_directory(tmpPath);
+		}
         
         // Copy the file from other to this
         if (fs::exists(other.m_path)) {

@@ -15,20 +15,20 @@ bool Store::DatasetView::has(std::string_view key_path) const {
 
 bool Store::DatasetView::has_value() const {
     if (source_ == nullptr || !source_->file_lock) return false;
-    std::shared_lock<std::shared_mutex> read_guard(*source_->file_lock);
+    std::shared_lock<detail::FileLockMutex> read_guard(*source_->file_lock);
     const std::string_view key = prefix_.empty() ? "__root__" : std::string_view(prefix_);
     return source_->store->get_bytes_no_lock(source_, key).has_value();
 }
 
 bool Store::DatasetView::has_keys() const {
     if (source_ == nullptr || !source_->file_lock) return false;
-    std::shared_lock<std::shared_mutex> read_guard(*source_->file_lock);
+    std::shared_lock<detail::FileLockMutex> read_guard(*source_->file_lock);
     return source_->store->has_subkeys_no_lock(source_, prefix_);
 }
 
 std::vector<std::string> Store::DatasetView::keys() const {
     if (source_ == nullptr || !source_->file_lock) return {};
-    std::shared_lock<std::shared_mutex> read_guard(*source_->file_lock);
+    std::shared_lock<detail::FileLockMutex> read_guard(*source_->file_lock);
     return source_->store->get_subkeys_no_lock(source_, prefix_);
 }
 
@@ -42,7 +42,7 @@ std::optional<Store::DatasetView> Store::get_dataset_view(std::string_view key_p
 
     const auto& [dataset_id, subkey] = key_parts.value();
 
-    std::shared_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::shared_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     const Source* source = find_source(dataset_id);
     if (source == nullptr) {
@@ -53,7 +53,7 @@ std::optional<Store::DatasetView> Store::get_dataset_view(std::string_view key_p
         return std::nullopt;
     }
 
-    std::shared_lock<std::shared_mutex> read_guard(*source->file_lock);
+    std::shared_lock<detail::FileLockMutex> read_guard(*source->file_lock);
 
     if (!source->dataset_map || !source->storage) {
         return std::nullopt;
@@ -100,7 +100,7 @@ Status Store::set_datasetview_impl(std::string_view key_path, const DatasetView&
 
     const auto& [dest_dataset_id, dest_subkey] = key_parts.value();
 
-    std::unique_lock<std::shared_mutex> sources_guard(sources_mutex_);
+    std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
     Source* dest_source_ptr = find_source(dest_dataset_id);
     if (dest_source_ptr == nullptr) {
@@ -112,18 +112,18 @@ Status Store::set_datasetview_impl(std::string_view key_path, const DatasetView&
         return last_status_ = Status::file_not_found;
     }
 
-    std::unique_lock<std::shared_mutex> guard_first;
-    std::unique_lock<std::shared_mutex> guard_second;
+    std::unique_lock<detail::FileLockMutex> guard_first;
+    std::unique_lock<detail::FileLockMutex> guard_second;
 
     if (&dest_source == view.source_) {
-        guard_first = std::unique_lock<std::shared_mutex>(*dest_source.file_lock);
+        guard_first = std::unique_lock<detail::FileLockMutex>(*dest_source.file_lock);
     } else {
         if (dest_source.file_lock.get() < view.source_->file_lock.get()) {
-            guard_first = std::unique_lock<std::shared_mutex>(*dest_source.file_lock);
-            guard_second = std::unique_lock<std::shared_mutex>(*view.source_->file_lock);
+            guard_first = std::unique_lock<detail::FileLockMutex>(*dest_source.file_lock);
+            guard_second = std::unique_lock<detail::FileLockMutex>(*view.source_->file_lock);
         } else {
-            guard_first = std::unique_lock<std::shared_mutex>(*view.source_->file_lock);
-            guard_second = std::unique_lock<std::shared_mutex>(*dest_source.file_lock);
+            guard_first = std::unique_lock<detail::FileLockMutex>(*view.source_->file_lock);
+            guard_second = std::unique_lock<detail::FileLockMutex>(*dest_source.file_lock);
         }
     }
 
