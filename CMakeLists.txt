@@ -7,7 +7,7 @@ option(BUILD_EXAMPLE "Build example application" OFF)
 option(BUILD_TESTS "Build test suite" OFF)
 option(BUILD_BENCHMARKS "Build benchmark suite" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
-option(AKASHA_SINGLE_THREAD "Replace all mutexes with no-op locks (faster, single-thread only — unsafe for concurrent access)" OFF)
+option(AKASHA_THREAD_SAFE "Enable thread-safe operation with std::shared_mutex (required for multithreaded use)" OFF)
 
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
@@ -37,7 +37,7 @@ target_compile_features(akasha PUBLIC cxx_std_23)
 target_compile_definitions(akasha
     PUBLIC
         AKASHA_VERSION="${CMAKE_PROJECT_VERSION}"
-        $<$<BOOL:${AKASHA_SINGLE_THREAD}>:AKASHA_SINGLE_THREAD>
+        $<$<BOOL:${AKASHA_THREAD_SAFE}>:AKASHA_THREAD_SAFE>
 )
 
 target_link_libraries(akasha 

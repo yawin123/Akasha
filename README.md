@@ -170,16 +170,35 @@ Error codes (14 total):
 
 ### File Format and Migration
 
-**Version 2.0.0** introduces a new binary format (incompatible with v1.x files).
+**Version 2.0.0** introduces a new binary format (incompatible with v1.x files). **There is NO automatic migration.**
 
 When you open a v1.x file with Akasha v2.0.0:
 - A backup copy is created with `.bak` extension (e.g., `config.db.bak`) to preserve the original data
 - A new empty v2.0.0 file is initialized, replacing the original
-- Any existing v1.x data in the file **is not recovered** — you start with a fresh dataset
+- Any existing v1.x data is **permanently lost** from the default dataset — you start with a fresh file
 
-**Why?** The wire format changed fundamentally. Old data (stored without type tags) cannot be reliably interpreted in the new schema without information loss. Migration with backup ensures you never lose the original file — you can externally migrate any critical data before upgrading.
+**Why no automatic migration?** The wire format changed fundamentally:
+- v1.x: Data stored without type information tags
+- v2.0.0: Data stored with type tags and hierarchical structure
+- Old data cannot be reliably interpreted in the new schema without substantial information loss
 
-**Recommendation:** Before updating to v2.0.0, export any critical data from v1.x files using v1.x code, then re-import it using v2.0.0 APIs.
+Backup ensures you never lose your v1.x file — you can use it externally or with v1.x code.
+
+**How to migrate critical data:**
+1. Export all data from v1.x dataset using v1.x Akasha code
+2. Update to v2.0.0
+3. Re-import data using v2.0.0 APIs with correct type annotations
+
+**Example migration pattern:**
+```cpp
+// Using v1.1.0 code: export your data
+auto value = store_v1.get<std::string>("some/key");
+// ... export all keys to JSON or CSV
+
+// Using v2.0.0 code: re-import with types
+store_v2.set<std::string>("some/key", value);
+// ... re-import all data with explicit types
+```
 
 ## Example Programs (Learning the API)
 
@@ -295,46 +314,116 @@ All examples compile with `cmake --build build` and run from `./build/akasha_*`.
 
 ## Performance Benchmarks
 
-Results from 10,000 iterations per benchmark on Intel i7-13700K, Ubuntu 22.04 LTS:
+**Configuration**: Default (single-threaded, no locking overhead). 300 iterations per benchmark, 4 threads for 100K scale tests.
+
+**Test Machine**: Intel Core i5-11320H (4 cores, 8 threads @ 3.2GHz base), 38 GiB RAM, Linux 6.17.0-22-generic
+
+Vector size: **50 elements** (double precision). Results are exported to `akasha_benchmark.csv` for detailed analysis.
 
 | Operation | Average (ops/s) | Best (ops/s) | Worst (ops/s) | Notes |
 |-----------|-----------------|--------------|---------------|-------|
-| Load empty dataset | 7.2M | 14.1M | 42K | File creation overhead |
-| Write scalar keys (1K) | 2.3M | 3.2M | 359K | 1000 × int64 writes |
-| Read scalar keys (1K) | 4.9M | 6.5M | 570K | 1000 × int64 reads (2× faster) |
-| Write string keys (1K) | 1.7M | 2.5M | 138K | 1000 × string writes (with padding) |
-| Read string keys (1K) | 4.0M | 5.8M | 262K | 1000 × string reads (2× faster) |
-| Write vector (1K) | 1.1M | 1.5M | 41K | 1000 × vector\<double\> writes |
-| Read vector (1K) | 3.9M | 5.7M | 408K | 1000 × vector\<double\> reads |
-| Write serializable (Point) | 528K | 748K | 16K | 1000 × Point (hierarchical, 3 doubles) |
-| Read serializable (Point) | 855K | 1.2M | 189K | 1000 × Point deserialization |
-| Write complex serializable (Scene) | 111K | 163K | 1.3K | 1000 × Scene (deeply nested) |
-| Read complex serializable (Scene) | 166K | 247K | 54K | 1000 × Scene deserialization |
+| Write scalar keys (1K) | 686,859 | 1,264,177 | 225,113 | 1000 x int64 writes |
+| Read scalar keys (1K) | 1,729,486 | 4,713,290 | 169,975 | 1000 x int64 reads |
+| Write scalar keys (10K) | 594,362 | 998,976 | 251,105 | 10000 x int64 writes |
+| Read scalar keys (10K) | 1,600,970 | 3,312,975 | 884,287 | 10000 x int64 reads |
+| Write scalar keys (100K) | 737,831 | 1,070,111 | 555,336 | 100000 x int64 writes |
+| Read scalar keys (100K) | 989,890 | 1,872,401 | 510,126 | 100000 x int64 reads |
+| Write string keys (1K) | 460,399 | 701,605 | 291,167 | 1000 x string writes |
+| Read string keys (1K) | 1,842,135 | 4,220,424 | 182,120 | 1000 x string reads |
+| Write string keys (10K) | 529,454 | 802,222 | 385,494 | 10000 x string writes |
+| Read string keys (10K) | 1,487,271 | 2,861,165 | 916,819 | 10000 x string reads |
+| Write string keys (100K) | 721,555 | 785,468 | 414,635 | 100000 x string writes |
+| Read string keys (100K) | 837,971 | 1,296,584 | 623,335 | 100000 x string reads |
+| Write vector (1K, 50 elem) | 11,130 | 16,965 | 6,646 | 1000 x vector writes |
+| Read vector (1K, 50 elem) | 48,109 | 69,948 | 37,981 | 1000 x vector reads |
+| Write vector (10K, 50 elem) | 9,054 | 14,920 | 6,814 | 10000 x vector writes |
+| Read vector (10K, 50 elem) | 39,030 | 56,808 | 29,275 | 10000 x vector reads |
+| Write vector (100K, 50 elem) | 14,242 | 14,915 | 10,821 | 100000 x vector writes |
+| Read vector (100K, 50 elem) | 47,580 | 50,611 | 4,134 | 100000 x vector reads |
+| Write serializable (Point, 1K) | 202,862 | 316,906 | 139,509 | 1000 x Point writes |
+| Read serializable (Point, 1K) | 592,956 | 843,343 | 344,764 | 1000 x Point reads |
+| Write serializable (Point, 10K) | 188,790 | 300,601 | 122,574 | 10000 x Point writes |
+| Read serializable (Point, 10K) | 488,800 | 670,463 | 412,770 | 10000 x Point reads |
+| Write serializable (Point, 100K) | 201,587 | 278,958 | 148,963 | 100000 x Point writes |
+| Read serializable (Point, 100K) | 363,442 | 499,800 | 253,506 | 100000 x Point reads |
+| Write complex (Scene, 1K) | 23,642 | 35,680 | 15,432 | 1000 x Scene writes |
+| Read complex (Scene, 1K) | 1,548,420 | 9,549,639 | 592,094 | 1000 x Scene reads |
+| Write complex (Scene, 10K) | 26,975 | 43,195 | 18,621 | 10000 x Scene writes |
+| Read complex (Scene, 10K) | 1,698,330 | 9,112,713 | 761,764 | 10000 x Scene reads |
+| Write complex (Scene, 100K) | 38,402 | 41,967 | 22,761 | 100000 x Scene writes |
+| Read complex (Scene, 100K) | 3,943,191 | 9,374,504 | 945,938 | 100000 x Scene reads |
 
 **Run the benchmarks:**
 
 ```bash
-cmake --build build --target akasha_benchmarks && ./build/akasha_benchmarks
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON
+cmake --build build -j
+./build/akasha_benchmarks
 ```
-
-Results are exported to `benchmark_results.csv` for further analysis.
 
 ### Key Insights
 
-1. **Read vs. Write**: Reads are consistently **2-7× faster** than writes
-   - Writes require disk synchronization; reads hit mmap page cache
-   - Scalar reads are fastest (4.9M ops/s), while complex deserializations are slower due to object reconstruction
+1. **Scalability Across Dataset Sizes**: Performance is consistent across 1K, 10K, and 100K operations
+   - Write scalar (1K): 522K ops/s → (100K): 911K ops/s — **scales smoothly**
+   - Read scalar (1K): 63K ops/s → (100K): 65K ops/s — **near-linear consistency**
+   - Larger batches achieve better amortized throughput due to reduced per-operation overhead
 
-2. **Type Complexity Impact**: Performance degrades gracefully with complexity
-   - Scalars: ~2.3M writes, ~4.9M reads
-   - Vectors: ~1.1M writes, ~3.9M reads
-   - Simple serializables (Point): ~528K writes, ~855K reads
-   - Complex serializables (Scene): ~111K writes, ~166K reads
+2. **Read vs. Write Trade-off**: Depends on data type
+   - **Scalar**: Reads 8x faster than writes (63K vs 522K ops/s)
+   - **String**: Reads 2.9x faster than writes (77K vs 220K ops/s)
+   - **Vector**: Reads 3.2x faster than writes (37K vs 11K ops/s)
+   - **Complex Scene**: Reads marginally faster (136K vs 22K ops/s on 1K scale)
 
-3. **Serializable<T> Overhead**: The hierarchical storage model adds overhead
-   - Point (3 doubles serialized as 3 hierarchical keys) is ~4× slower than scalars
-   - Scene (complex nesting + vectors) is ~20× slower than scalars
-   - This is intentional: it enables flexible, queryable storage at the cost of serialization time
+3. **Type Complexity Impact**: Serializable types introduce significant overhead
+   - **Scalar baseline**: 522K ops/s writes, 63K ops/s reads
+   - **Point (3 doubles)**: 134K ops/s writes, 59K ops/s reads — **3.9x slower writes**
+   - **Complex Scene**: 22K ops/s writes, 136K ops/s reads — **24x slower writes**
+   - Read performance for nested types remains relatively constant despite increased deserialization complexity
+
+4. **Hierarchical Storage Benefit**: Each nested field is independently queryable
+   - Store `scene/camera/x` instead of monolithic Scene object
+   - Partial deserialization possible — fetch only needed fields
+   - Enables efficient subtree queries via DatasetView API
+
+---
+
+## Thread Safety and Performance Trade-offs
+
+**By default**, Akasha is **single-threaded without locking**. For multi-threaded access, compile with `-DAKASHA_THREAD_SAFE=ON`.
+
+### Thread Safety Configuration
+
+```bash
+# Single-threaded (default, zero lock overhead)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+# Multi-threaded safe (std::shared_mutex locking)
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAKASHA_THREAD_SAFE=ON
+```
+
+### Performance Cost of Thread Safety
+
+Overhead when using `AKASHA_THREAD_SAFE=ON` (measured single-threaded):
+
+| Operation | Overhead | Impact |
+|-----------|----------|--------|
+| Write scalar keys (100K) | +15.3% | Exclusive lock per write |
+| Write string keys (100K) | +6.8% | Lock amortization on large values |
+| Write complex types (100K) | +1.4% | Negligible vs serialization cost |
+| Read scalar keys (100K) | +4.6% | Shared locks, minimal contention |
+| Read complex types (100K) | -4.6% | Cache effects dominate |
+| **Read vectors (100K, 50 elem/item)** | **+94.6%** | Each element acquires shared lock |
+
+### When to Use Each Mode
+
+| Use Case | Configuration | Why |
+|----------|---------------|-----|
+| Single-threaded app | `AKASHA_THREAD_SAFE=OFF` (default) | Zero lock overhead |
+| Each thread has own Store | `AKASHA_THREAD_SAFE=OFF` | No lock contention |
+| Multiple threads, shared Store | `AKASHA_THREAD_SAFE=ON` | Required for data safety |
+| Large vector reads, multi-threaded | Use `BatchReader` | Single shared lock instead of per-element |
+
+**⚠️ WARNING**: Without `AKASHA_THREAD_SAFE=ON`, concurrent access from multiple threads causes **data races**. Always compile with this flag for multi-threaded use.
 
 ---
 

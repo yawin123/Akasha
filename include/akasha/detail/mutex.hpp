@@ -5,22 +5,22 @@
  * @brief Selects the mutex type used for per-source file locking.
  *
  * Compile-time flag:
- *   AKASHA_SINGLE_THREAD  — replaces all file/source mutexes with a no-op
- *                           implementation. Zero overhead; unsafe for
- *                           concurrent access from multiple threads.
- *   (default)             — std::shared_mutex (full thread-safety).
+ *   AKASHA_THREAD_SAFE  — uses std::shared_mutex for full thread-safety.
+ *                         Required for multithreaded use; has locking overhead.
+ *   (default)           — uses NoOpSharedMutex (zero overhead). Safe only for
+ *                         single-threaded access; unsafe for concurrent threads.
  *
- * Usage: -DAKASHA_SINGLE_THREAD (compiler flag) or via CMake option
- *        AKASHA_SINGLE_THREAD=ON.
+ * Usage: -DAKASHA_THREAD_SAFE (compiler flag) or via CMake option
+ *        AKASHA_THREAD_SAFE=ON.
  */
 
-#ifndef AKASHA_SINGLE_THREAD
+#ifdef AKASHA_THREAD_SAFE
 #include <shared_mutex>
 #endif
 
 namespace akasha::detail {
 
-#ifdef AKASHA_SINGLE_THREAD
+#ifndef AKASHA_THREAD_SAFE
 
 /**
  * @brief Drop-in no-op replacement for std::shared_mutex.
@@ -29,6 +29,8 @@ namespace akasha::detail {
  * with std::unique_lock<> and std::shared_lock<> without changes to call
  * sites. All operations are inlined no-ops — the compiler eliminates them
  * entirely in optimized builds.
+ *
+ * Default behavior: zero-overhead for single-threaded use.
  */
 struct NoOpSharedMutex {
     constexpr void lock()          noexcept {}

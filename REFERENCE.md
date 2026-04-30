@@ -66,6 +66,14 @@ int main() {
 }
 ```
 
+**⚠️ Thread Safety Note**: This code is single-threaded safe. If you need access the `Store` from multiple threads, compile with `-DAKASHA_THREAD_SAFE=ON`:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAKASHA_THREAD_SAFE=ON
+```
+
+Without this flag, concurrent access will cause **data races**. See [Thread Safety and Concurrency](#thread-safety-and-concurrency) for details.
+
 ---
 
 ## Fundamental Concepts
@@ -115,6 +123,35 @@ std::string_view v = akasha::version();  // "2.0.0"
 ```
 
 Returns the semantic version defined by the `AKASHA_VERSION` macro at compilation.
+
+### Backward Compatibility
+
+**v2.0.0 is NOT backward compatible with v1.x files.**
+
+The binary format changed fundamentally between versions. When you attempt to load a v1.x file with Akasha v2.0.0:
+
+1. A backup copy is created: `filename.db.bak`
+2. A new empty v2.0.0 file is initialized: `filename.db`
+3. **No automatic data migration** — v1.x data is not transferred
+
+**Reason**: v1.x data lacks type information tags. Attempting automatic conversion would result in data loss or corruption.
+
+**How to migrate critical data:**
+
+```cpp
+// Step 1: Using Akasha v1.1.0, export data to external format
+akasha::Store store_v1;
+store_v1.load("db", "/path/to/old.db");
+// ... export to JSON/CSV using v1.x APIs
+
+// Step 2: Update to Akasha v2.0.0
+// Step 3: Re-import with explicit types
+akasha::Store store_v2;
+store_v2.load("db", "/path/to/new.db", akasha::FileOptions::create_if_missing);
+// ... import from JSON/CSV using v2.0.0 APIs with type annotations
+```
+
+**The backup (.bak) file preserves your original data** — you can use it for manual recovery or keep it for reference.
 
 ---
 
@@ -840,12 +877,52 @@ Compound types have no TypeTag: they decompose into scalar subkeys.
 
 ## Thread Safety and Concurrency
 
-- Each memory-mapped file has its own `std::shared_mutex`.
-- **Reads** (`get<T>`, `has`, `keys`): acquire shared lock. Multiple simultaneous readers.
-- **Writes** (`set<T>`, `clear`, `compact`): acquire exclusive lock. Block readers and other writers.
-- `BatchWriter` holds exclusive lock from construction until `commit()` or destruction.
-- `BatchReader` holds shared lock throughout its lifetime.
-- Safe to operate on different datasets from multiple threads simultaneously (independent locks).
+**Default behavior**: Single-threaded, no locks (zero overhead via `NoOpSharedMutex`).
+
+To use from multiple threads, compile with `-DAKASHA_THREAD_SAFE=ON` to enable `std::shared_mutex`.
+
+### Lock Semantics
+
+When `AKASHA_THREAD_SAFE=ON`:
+- Each memory-mapped file has its own `std::shared_mutex`
+- **Reads** (`get<T>`, `has`, `keys`): acquire shared lock → multiple simultaneous readers
+- **Writes** (`set<T>`, `clear`, `compact`): acquire exclusive lock → serialized, blocks readers
+- `BatchWriter` holds exclusive lock from construction until `commit()` or destruction
+- `BatchReader` holds shared lock throughout its lifetime
+- Safe to operate on different datasets from multiple threads (independent per-file locks)
+
+### Performance Impact
+
+| Scenario | Default | THREAD_SAFE=ON | Overhead |
+|----------|---------|----------------|----------|
+| Write scalar (single) | ~1.27 µs | ~1.47 µs | +15.8% |
+| Read scalar (single) | ~524 ns | ~548 ns | +4.6% |
+| Write vector (100 elem) | ~73.5 µs | ~75.3 µs | +2.4% |
+| Read vector (100 elem) | ~20.5 µs | ~39.8 µs | +94.1% ⚠️ |
+
+**Note**: Large vector reads are expensive with per-element locking. Use `BatchReader` for bulk operations on multi-threaded workloads.
+
+### Best Practices
+
+- **Single-threaded**: Leave `AKASHA_THREAD_SAFE=OFF` (default) for maximum performance
+- **Thread-per-Store**: Each thread creates its own `Store` and works independently → `AKASHA_THREAD_SAFE=OFF` safe
+- **Shared Store**: Multiple threads access same `Store` → **must use** `AKASHA_THREAD_SAFE=ON`
+- **Bulk reads, multi-threaded**: Use `BatchReader` to acquire single shared lock instead of per-element locks
+
+### Data Safety Without THREAD_SAFE
+
+Without `AKASHA_THREAD_SAFE=ON`, concurrent access is **undefined behavior**:
+
+```cpp
+// UNSAFE - data races
+akasha::Store store;
+store.load("data", "file.db");
+
+// Thread 1        | Thread 2
+store.set("a", 1); | store.set("b", 2);  // RACE CONDITION
+```
+
+Solution: Either use separate `Store` per thread, or compile with `-DAKASHA_THREAD_SAFE=ON`.
 
 ---
 
@@ -964,6 +1041,8 @@ target_link_libraries(myapp akasha::akasha)
 | `BUILD_EXAMPLE` | `OFF` | Compiles examples in `examples/` |
 | `BUILD_TESTS` | `OFF` | Compiles test suite |
 | `BUILD_BENCHMARKS` | `OFF` | Compiles benchmarks |
+| `AKASHA_THREAD_SAFE` | `OFF` | Enable std::shared_mutex for multi-threaded access (5-15% overhead, required for concurrent use) |
+| `AKASHA_BUILD_SINGLE_ARCHIVE` | `OFF` | Build bundled static archive with all static dependencies |
 
 ### Build and Run Examples
 
