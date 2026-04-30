@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 1.0.0 LANGUAGES CXX)
+project(Akasha VERSION 2.0.0 LANGUAGES CXX)
 
 # Options can be set from CMake or from Conan
 option(BUILD_EXAMPLE "Build example application" OFF)
 option(BUILD_TESTS "Build test suite" OFF)
+option(BUILD_BENCHMARKS "Build benchmark suite" OFF)
 option(AKASHA_BUILD_SINGLE_ARCHIVE "Build a bundled static archive with Akasha and its static dependencies" OFF)
+option(AKASHA_THREAD_SAFE "Enable thread-safe operation with std::shared_mutex (required for multithreaded use)" OFF)
 
 set(AKASHA_DEP_TARGETS "" CACHE STRING "Semicolon-separated static library targets linked privately into akasha")
 set(AKASHA_BUNDLE_ARCHIVES "" CACHE STRING "Semicolon-separated additional static archive paths for bundling")
@@ -15,7 +17,11 @@ list(PREPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 find_package(Boost REQUIRED)
 
 add_library(akasha STATIC
-    src/akasha.cpp
+    src/store_core.cpp
+    src/store_data.cpp
+    src/store_memory.cpp
+    src/store_views.cpp
+    src/batch.cpp
 )
 
 add_library(akasha::akasha ALIAS akasha)
@@ -31,6 +37,7 @@ target_compile_features(akasha PUBLIC cxx_std_23)
 target_compile_definitions(akasha
     PUBLIC
         AKASHA_VERSION="${CMAKE_PROJECT_VERSION}"
+        $<$<BOOL:${AKASHA_THREAD_SAFE}>:AKASHA_THREAD_SAFE>
 )
 
 target_link_libraries(akasha 
@@ -69,25 +76,30 @@ if(BUILD_EXAMPLE)
     add_executable(akasha_nested_data examples/nested_data.cpp)
     target_link_libraries(akasha_nested_data PRIVATE akasha::akasha)
     
-    # 7. Benchmarks: performance measurements
-    add_executable(akasha_benchmarks examples/benchmarks.cpp)
-    target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
-    
-    # 8. DatasetView: subtree navigation, introspection, and copying
+    # 7. DatasetView: subtree navigation, introspection, and copying
     add_executable(akasha_datasetview examples/datasetview.cpp)
     target_link_libraries(akasha_datasetview PRIVATE akasha::akasha)
     
-    # 9. Vectors: storing and retrieving std::vector<T> of scalar types
+    # 8. Vectors: storing and retrieving std::vector<T> of scalar types
     add_executable(akasha_vectors examples/vectors.cpp)
     target_link_libraries(akasha_vectors PRIVATE akasha::akasha)
     
-    # 10. Compaction: demonstrating defragmentation and space reclamation
+    # 9. Compaction: demonstrating defragmentation and space reclamation
     add_executable(akasha_compaction examples/compaction.cpp)
     target_link_libraries(akasha_compaction PRIVATE akasha::akasha)
     
-    # 11. Performance Tuning: configuring file growth and memory allocation parameters
+    # 10. Performance Tuning: configuring file growth and memory allocation parameters
     add_executable(akasha_performance_tuning examples/performance_tuning.cpp)
     target_link_libraries(akasha_performance_tuning PRIVATE akasha::akasha)
+    
+    # 11. Serializable<T>: user-defined types with structured storage
+    add_executable(akasha_serializable examples/serializable.cpp)
+    target_link_libraries(akasha_serializable PRIVATE akasha::akasha)
+    
+    # 12. JSON roundtrip: JSON → Serializable<T> → Akasha roundtrip
+    add_executable(akasha_json_roundtrip examples/json_roundtrip.cpp)
+    target_include_directories(akasha_json_roundtrip PRIVATE "${CMAKE_BINARY_DIR}/nlohmann_json/include")
+    target_link_libraries(akasha_json_roundtrip PRIVATE akasha::akasha)
     
     # Reset BUILD_EXAMPLE to OFF after processing so next build doesn't compile examples
     set(BUILD_EXAMPLE OFF CACHE BOOL "Build example application" FORCE)
@@ -98,7 +110,14 @@ if(BUILD_TESTS)
     # All test files are included from basic_tests.cpp to ensure proper initialization
     add_executable(akasha_tests tests/basic_tests.cpp)
     target_link_libraries(akasha_tests PRIVATE akasha::akasha)
-    target_include_directories(akasha_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_include_directories(akasha_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_BINARY_DIR}/simple-test-framework)
+endif()
+
+if(BUILD_BENCHMARKS)
+    # Benchmark suite using SBF (Simple Benchmark Framework)
+    add_executable(akasha_benchmarks benchmarks/benchmark_main.cpp)
+    target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
+    target_include_directories(akasha_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include/scf/include)
 endif()
 
 if(AKASHA_BUILD_SINGLE_ARCHIVE)
@@ -142,6 +161,7 @@ install(TARGETS akasha
 )
 
 install(FILES include/akasha.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/akasha DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Configure akashaConfig.cmake from template
 configure_file(

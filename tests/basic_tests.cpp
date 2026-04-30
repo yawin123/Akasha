@@ -14,8 +14,12 @@
 #include "test_load_errors.cpp"     //Load/unload errors
 #include "test_type_and_size.cpp"   //Type mismatches and large values
 #include "test_datasetview.cpp"     //Complex nested DatasetView navigation
+#include "test_datasetview_set.cpp" //DatasetView::set<T>() writing through views
 #include "test_vectors.cpp"         //Vector serialization and deserialization
+#include "test_stl_containers.cpp"  //STL container cross-serialization (list, set, unordered_set)
 #include "test_structs.cpp"         //Struct storage: same type, mixed types, many members
+#include "test_rfc8259.cpp"         //RFC 8259 complete JSON model coverage
+#include "test_edge_cases.cpp"      //Edge cases: reallocation, extremes, large values, fragmentation
 
 int main() {
     std::cout << "Running Akasha Test Suite...\n";

@@ -25,24 +25,24 @@ int main() {
     
     // 1. Set up a hierarchical configuration
     std::cout << "1. Setting up hierarchical configuration:\n";
-    (void)store.set<int32_t>("config.server.port", 8080);
-    (void)store.set<std::string>("config.server.host", "localhost");
-    (void)store.set<bool>("config.server.ssl", true);
+    (void)store.set<int64_t>("config/server/port", 8080);
+    (void)store.set<std::string>("config/server/host", "localhost");
+    (void)store.set<bool>("config/server/ssl", true);
     
-    (void)store.set<int32_t>("config.database.port", 5432);
-    (void)store.set<std::string>("config.database.host", "db.example.com");
-    (void)store.set<std::string>("config.database.user", "admin");
+    (void)store.set<int64_t>("config/database/port", 5432);
+    (void)store.set<std::string>("config/database/host", "db.example.com");
+    (void)store.set<std::string>("config/database/user", "admin");
     
-    (void)store.set<int32_t>("config.cache.ttl", 3600);
-    (void)store.set<std::string>("config.cache.backend", "redis");
+    (void)store.set<int64_t>("config/cache/ttl", 3600);
+    (void)store.set<std::string>("config/cache/backend", "redis");
     
-    std::cout << "   ✓ Created config.server.*\n";
-    std::cout << "   ✓ Created config.database.*\n";
-    std::cout << "   ✓ Created config.cache.*\n\n";
+    std::cout << "   ✓ Created config/server/*\n";
+    std::cout << "   ✓ Created config/database/*\n";
+    std::cout << "   ✓ Created config/cache/*\n\n";
     
     // 2. Get a DatasetView of a subtree
-    std::cout << "2. Getting DatasetView of 'config.server':\n";
-    auto server_view = store.get<Store::DatasetView>("config.server");
+    std::cout << "2. Getting DatasetView of 'config/server':\n";
+    auto server_view = store.get<Store::DatasetView>("config/server");
     
     if (server_view) {
         std::cout << "   - View exists: YES\n";
@@ -62,7 +62,7 @@ int main() {
     // 3. Relative path navigation from DatasetView
     std::cout << "3. Relative path navigation from server view:\n";
     if (server_view) {
-        auto port = server_view->template get<int32_t>("port");
+        auto port = server_view->template get<int64_t>("port");
         auto host = server_view->template get<std::string>("host");
         auto ssl = server_view->template get<bool>("ssl");
         
@@ -75,15 +75,15 @@ int main() {
     // 4. Copy a subtree to a new location
     std::cout << "4. Copying subtree (backup):\n";
     if (server_view) {
-        auto copy_status = store.set<Store::DatasetView>("config.server_backup", *server_view);
+        auto copy_status = store.set<Store::DatasetView>("config/server_backup", *server_view);
         if (copy_status == Status::ok) {
-            std::cout << "   ✓ config.server copied to config.server_backup\n";
+            std::cout << "   ✓ config/server copied to config/server_backup\n";
             
-            auto backup = store.get<Store::DatasetView>("config.server_backup");
+            auto backup = store.get<Store::DatasetView>("config/server_backup");
             if (backup && backup->has_keys()) {
                 std::cout << "   ✓ Backup has " << backup->keys().size() << " keys\n";
                 
-                auto backup_port = backup->template get<int32_t>("port");
+                auto backup_port = backup->template get<int64_t>("port");
                 if (backup_port) {
                     std::cout << "   ✓ backup.port = " << *backup_port << "\n";
                 }
@@ -101,10 +101,10 @@ int main() {
     
     std::vector<NodeInfo> nodes = {
         {"config"},
-        {"config.server"},
-        {"config.server.port"},
-        {"config.database"},
-        {"config.cache.ttl"}
+        {"config/server"},
+        {"config/server/port"},
+        {"config/database"},
+        {"config/cache/ttl"}
     };
     
     for (const auto& node : nodes) {
@@ -123,11 +123,11 @@ int main() {
     
     // 6. Modify through DatasetView and verify changes
     std::cout << "6. Modifying and verifying changes:\n";
-    (void)store.set<int32_t>("config.server.port", 9000);
+    (void)store.set<int64_t>("config/server/port", 9000);
     
-    auto updated_server = store.get<Store::DatasetView>("config.server");
+    auto updated_server = store.get<Store::DatasetView>("config/server");
     if (updated_server) {
-        auto new_port = updated_server->template get<int32_t>("port");
+        auto new_port = updated_server->template get<int64_t>("port");
         std::cout << "   After changing port to 9000:\n";
         std::cout << "   server.port = " << (new_port ? std::to_string(*new_port) : "not found") << "\n";
     }
@@ -154,10 +154,10 @@ int main() {
                                   << " root keys\n";
                         
                         // Verify nested structure exists
-                        auto cloned_server = store.get<Store::DatasetView>("config_clone.server");
+                        auto cloned_server = store.get<Store::DatasetView>("config_clone/server");
                         if (cloned_server && cloned_server->has_keys()) {
                             std::cout << "   ✓ Nested structure preserved: "
-                                      << "config_clone.server has " 
+                                      << "config_clone/server has " 
                                       << cloned_server->keys().size() << " keys\n";
                         }
                     }
@@ -174,30 +174,30 @@ int main() {
     auto defaults_status = store.load("defaults", "/tmp/datasetview_defaults.db", akasha::FileOptions::create_if_missing);
     if (defaults_status == Status::ok) {
         // Set default values for a new service
-        (void)store.set<int32_t>("defaults.cache.ttl", 1800);
-        (void)store.set<std::string>("defaults.cache.backend", "memcached");
+        (void)store.set<int64_t>("defaults/cache/ttl", 1800);
+        (void)store.set<std::string>("defaults/cache/backend", "memcached");
         
         // Get the defaults view
-        auto defaults_cache = store.get<Store::DatasetView>("defaults.cache");
+        auto defaults_cache = store.get<Store::DatasetView>("defaults/cache");
         
         if (defaults_cache) {
             // Now, use getorset to get or initialize a production cache config
-            // If config.production.cache doesn't exist, use the defaults
+            // If config/production/cache doesn't exist, use the defaults
             auto prod_cache = store.getorset<Store::DatasetView>(
-                "config.production.cache",
+                "config/production/cache",
                 *defaults_cache
             );
             
             if (prod_cache) {
-                std::cout << "   ✓ config.production.cache initialized\n";
+                std::cout << "   ✓ config/production/cache initialized\n";
                 std::cout << "   ✓ TTL (from defaults): " 
-                          << prod_cache->template get<int32_t>("ttl").value_or(0) << "\n";
+                          << prod_cache->template get<int64_t>("ttl").value_or(0) << "\n";
                 std::cout << "   ✓ Backend (from defaults): " 
                           << prod_cache->template get<std::string>("backend").value_or("") << "\n";
                 
                 // Second call to getorset should return existing (not copy over defaults again)
                 auto prod_cache_again = store.getorset<Store::DatasetView>(
-                    "config.production.cache",
+                    "config/production/cache",
                     *defaults_cache
                 );
                 if (prod_cache_again && prod_cache_again->has_keys()) {

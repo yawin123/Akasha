@@ -40,16 +40,21 @@ int main() {
 
     // Insert 1000 strings, each ~200 bytes
     for (int i = 0; i < 1000; ++i) {
-        std::string key = "config.data." + std::to_string(i);
+        std::string key = "config/data/" + std::to_string(i);
         std::string value = "This is a large value #" + std::to_string(i) + 
                            " with padding to make it approximately 200 bytes long. " +
                            "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
                            "Sed do eiusmod tempor incididunt ut labore et dolore magna.";
         
-        store.set<std::string>(key, value);
+        if (store.set<std::string>(key, value) != akasha::Status::ok) {
+            std::cerr << "Error storing data\n";
+            return 1;
+        }
     }
 
-    store.unload("config");
+    if (store.unload("config") != akasha::Status::ok) {
+        std::cerr << "Error unloading\n";
+    }
     std::size_t size_after_insert = fs::file_size(db_path);
     std::cout << "  Inserted 1000 large strings\n";
     std::cout << "  File size: " << size_after_insert / 1024 << " KB\n\n";
@@ -65,8 +70,8 @@ int main() {
 
     // Delete 900 keys, keep only 100
     for (int i = 0; i < 900; ++i) {
-        std::string key = "config.data." + std::to_string(i);
-        store.clear(key);
+        std::string key = "config/data/" + std::to_string(i);
+        [[maybe_unused]] auto clear_status = store.clear(key);
     }
 
     store.unload("config");
@@ -95,7 +100,10 @@ int main() {
         return 1;
     }
 
-    store.unload("config");
+    if (store.unload("config") != akasha::Status::ok) {
+        std::cerr << "Error unloading\n";
+        return 1;
+    }
     std::size_t size_after_compact = fs::file_size(db_path);
     
     std::cout << "  Compaction completed in " << std::fixed << std::setprecision(2) 
@@ -126,7 +134,7 @@ int main() {
     // Verify that the remaining 100 keys are intact (items 900-999)
     int verified = 0;
     for (int i = 900; i < 1000; ++i) {
-        std::string key = "config.data." + std::to_string(i);
+        std::string key = "config/data/" + std::to_string(i);
         auto value = store.get<std::string>(key);
         if (value.has_value()) {
             ++verified;
@@ -141,7 +149,10 @@ int main() {
         std::cerr << "  ✗ Data integrity check failed!\n";
     }
 
-    store.unload("config");
+    if (store.unload("config") != akasha::Status::ok) {
+        std::cerr << "Error unloading\n";
+        return 1;
+    }
 
     // ==================== CLEANUP ====================
     fs::remove(db_path);
