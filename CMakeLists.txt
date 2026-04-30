@@ -161,6 +161,7 @@ install(TARGETS akasha
 )
 
 install(FILES include/akasha.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/akasha DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 # Configure akashaConfig.cmake from template
 configure_file(
