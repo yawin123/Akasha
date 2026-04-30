@@ -6,7 +6,7 @@ import yaml
 
 class AkashaConan(ConanFile):
     name = "akasha"
-    version = "1.2.0"
+    version = "2.0.0"
     description = "High-performance hierarchical data store with memory-mapped file persistence"
     url = "https://github.com/yawin123/Akasha"
     license = "MIT"
@@ -16,10 +16,12 @@ class AkashaConan(ConanFile):
     options = {
         "build_examples": [True, False],
         "build_single_archive": [True, False],
+        "thread_safe": [True, False],
     }
     default_options = {
         "build_examples": False,
         "build_single_archive": False,
+        "thread_safe": False,
     }
     
     exports_sources = "src/*", "include/*", "cmake/*", "CMakeLists.txt", "conandata.yml"
@@ -52,7 +54,8 @@ class AkashaConan(ConanFile):
     
     def build(self):
         cmake = CMake(self)
-        cmake.configure()
+        thread_safe_flag = "-DAKASHA_THREAD_SAFE=ON" if self.options.thread_safe else "-DAKASHA_THREAD_SAFE=OFF"
+        cmake.configure(cli_args=[thread_safe_flag])
         cmake.build()
     
     def package(self):
