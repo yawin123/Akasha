@@ -24,7 +24,8 @@ Comprehensive guide to the Akasha library: a hierarchical key-value store with p
 16. [Internal Binary Format](#internal-binary-format)
 17. [Thread Safety and Concurrency](#thread-safety-and-concurrency)
 18. [Edge Cases and Robustness](#edge-cases-and-robustness)
-19. [Compilation and Integration](#compilation-and-integration)
+19. [Akasha Containers — Persistent Containers](#akasha-containers--persistent-containers)
+21. [Compilation and Integration](#compilation-and-integration)
 
 ---
 
@@ -1002,6 +1003,280 @@ store.unload("db");
 // Later...
 store.load("db", "/tmp/data.db");
 auto val = store.get<int64_t>("db/counter");  // 42
+```
+
+---
+
+## Akasha Containers — Persistent Containers
+
+Akasha provides persistent containers that live directly inside the Store. Unlike STL containers (which are fully serialized on each `store.set` call), these containers operate element-by-element on the memory-mapped file: every write persists immediately, with no in-memory cache.
+
+They are interoperable with their STL equivalents: data written by one can be read by the other.
+
+---
+
+### akasha::vector\<T\>
+
+`akasha::vector<T>` is a persistent vector. Every `push_back` or assignment via `operator[]` writes directly to the store.
+
+#### Construction
+
+There are two ways to obtain an `akasha::vector<T>`:
+
+| Form | Path does not exist | Path exists |
+|---|---|---|
+| Direct constructor | Creates empty vector | Opens existing data as-is |
+| `store.get<akasha::vector<T>>` | Returns `std::nullopt` | Returns `std::optional<akasha::vector<T>>` |
+
+**Use the direct constructor** when you want create-or-open semantics. The same path always gives you a valid vector:
+
+```cpp
+akasha::vector<int64_t> vec(store, "db/numbers");  // always valid
+vec.push_back(int64_t(42));
+```
+
+**Use `store.get`** when you need to distinguish between a path that was never written and one that was, consistent with the rest of the store API:
+
+```cpp
+auto opt = store.get<akasha::vector<int64_t>>("db/numbers");
+if (!opt) {
+    // path never existed as a vector — handle missing case
+} else {
+    std::cout << opt->size();
+}
+```
+
+#### Supported Types
+
+Any type accepted by `store.set<T>` / `store.get<T>`, including serializable types.
+
+#### API
+
+| Method | Description |
+|---|---|
+| `size() → size_t` | Number of elements |
+| `empty() → bool` | `true` if empty |
+| `push_back(value)` | Appends element at the end. O(1) |
+| `push_front(value)` | Inserts element at the beginning. O(n): shifts all elements right |
+| `pop_back()` | Removes last element. O(1). Throws if empty |
+| `pop_front()` | Removes first element. O(n): shifts all elements left. Throws if empty |
+| `operator[](i)` (mutable) | `StoreRef<T>` proxy — assignment persists to mmap |
+| `operator[](i)` (const) | Returns `T` by value |
+| `at(i)` (mutable/const) | Same as `operator[]` with bounds check |
+| `front()` / `back()` (mutable/const) | First / last element |
+| `resize(n)` | Resizes; fills new slots with `T{}` |
+| `resize(n, value)` | Resizes; fills new slots with `value` |
+| `clear()` | Removes all elements and sets size to 0 |
+| `begin()` / `end()` | Mutable iterators (`StoreRef<T>` on deref) |
+| `cbegin()` / `cend()` | Read-only iterators (return `T` by value) |
+
+```cpp
+vec.push_back(int64_t(42));
+vec.push_back(int64_t(100));
+vec.push_front(int64_t(0));  // [0, 42, 100]
+
+std::cout << vec.size();     // 3
+std::cout << vec[0];         // 0
+vec[0] = int64_t(99);        // persists to mmap
+
+vec.pop_front();             // [42, 100]  (O(n))
+vec.pop_back();              // [42]       (O(1))
+
+vec.resize(5, int64_t(0));   // [42, 0, 0, 0, 0]
+vec.clear();                 // []
+```
+
+#### Iteration
+
+```cpp
+for (auto val : std::as_const(vec))   // const_iterator: returns T by value
+    std::cout << val << ' ';
+
+for (auto ref : vec)                  // iterator: ref is StoreRef<T>
+    ref = ref + int64_t(1);           // modifies mmap in place
+```
+
+#### Storage Format
+
+```
+db/numbers/__count__  →  int64_t  (size)
+db/numbers/0          →  T
+db/numbers/1          →  T
+```
+
+Compatible with `std::vector<T>`: a vector written via `store.set<std::vector<T>>` can be read back with `akasha::vector<T>` and vice versa.
+
+```cpp
+// Write with std::vector
+std::vector<double> stl = {1.0, 2.0, 3.0};
+store.set<std::vector<double>>("db/v", stl);
+
+// Read with akasha::vector via store.get (returns nullopt if path was never a vector)
+auto opt = store.get<akasha::vector<double>>("db/v");
+if (opt) {
+    std::cout << opt->size();   // 3
+    std::cout << (*opt)[1];     // 2.0
+}
+
+// Copy akasha::vector → std::vector
+auto copy = store.get<std::vector<double>>("db/v");
+```
+
+#### Persistence Across Sessions
+
+```cpp
+// Session 1
+{
+    akasha::Store store;
+    store.load("db", "/tmp/data.db", akasha::FileOptions::create_if_missing);
+    akasha::vector<int64_t> v(store, "db/v");
+    v.push_back(int64_t(1));
+    v.push_back(int64_t(2));
+    store.unload("db");
+}
+
+// Session 2
+{
+    akasha::Store store;
+    store.load("db", "/tmp/data.db");
+    akasha::vector<int64_t> v(store, "db/v");
+    // v.size() == 2, v[0] == 1, v[1] == 2
+}
+```
+
+---
+
+### akasha::map\<K,V\>
+
+`akasha::map<K,V>` is a persistent map where each key→value pair lives directly in the Store. Writes are immediate.
+
+#### Construction
+
+There are two ways to obtain an `akasha::map<K,V>`:
+
+| Form | Path does not exist | Path exists |
+|---|---|---|
+| Direct constructor | Creates empty map  | Opens existing data as-is |
+| `store.get<akasha::map<K,V>>` | Returns `std::nullopt` | Returns `std::optional<akasha::map<K,V>>` |
+
+**Use the direct constructor** when you want create-or-open semantics. The same path always gives you a valid map:
+
+```cpp
+akasha::map<std::string, int64_t> m(store, "db/counters");  // always valid
+m.insert("hits", int64_t(0));
+```
+
+**Use `store.get`** when you need to distinguish between a path that was never written and one that was, consistent with the rest of the store API:
+
+```cpp
+auto opt = store.get<akasha::map<std::string, int64_t>>("db/counters");
+if (!opt) {
+    // path never existed as a map — handle missing case
+} else {
+    std::cout << opt->size();
+}
+```
+
+#### Supported Key Types
+
+`std::string`, `int64_t` (and any integral type), `double` (and any floating-point type).
+
+#### Supported Value Types
+
+Any type accepted by `store.set<T>` / `store.get<T>`, including serializable types.
+
+#### API
+
+| Method | Description |
+|---|---|
+| `size() → size_t` | Number of entries |
+| `empty() → bool` | `true` if empty |
+| `contains(key) → bool` | `true` if the key exists |
+| `at(key) → V` | Returns value by value; throws `std::out_of_range` if not found |
+| `operator[](key)` (const) | Same as `at()` |
+| `operator[](key)` (mutable) | `StoreRef<V>` proxy; inserts `V{}` if the key is new |
+| `insert(key, value)` | Inserts or replaces |
+| `insert(first, last)` | Inserts a range of `{K,V}` pairs; `__children__` written only once |
+| `erase(key) → bool` | Removes key; returns `false` if not found |
+| `clear()` | Removes all entries |
+| `begin()` / `end()` | Read-only iterators (return `std::pair<K,V>` by value) |
+| `cbegin()` / `cend()` | Aliases of the above |
+
+```cpp
+m.insert("hits",    int64_t(0));
+m.insert("misses",  int64_t(0));
+
+m["hits"] = m["hits"] + int64_t(1);  // read + persistent write
+std::cout << m.at("hits");           // 1
+std::cout << m.size();               // 2
+
+m.erase("misses");                   // true
+std::cout << m.contains("misses");   // false
+```
+
+#### Batch Insert (Efficient)
+
+Each individual `insert()` rewrites children metadata in full (accumulated O(n) writes). To insert multiple elements at once, it is better to use iterator overloading:
+
+```cpp
+std::vector<std::pair<std::string, int64_t>> pairs = {
+    {"a", 1}, {"b", 2}, {"c", 3}
+};
+m.insert(pairs.begin(), pairs.end());
+```
+
+#### Iteration
+
+```cpp
+for (auto [key, value] : m)
+    std::cout << key << " = " << value << '\n';
+```
+
+The iterator is a `const_iterator` (forward). Each dereference reads the value from the Store.
+
+#### Storage Format
+
+```
+db/counters/__children__  →  "hits\nmisses"  (newline-separated keys)
+db/counters/hits          →  int64_t
+db/counters/misses        →  int64_t
+```
+
+Compatible with `std::map<K,V>` and `std::unordered_map<K,V>`: a map written via `store.set<std::map<K,V>>` can be read with `akasha::map<K,V>` and vice versa.
+
+```cpp
+// Write with std::map
+std::map<std::string, int64_t> stl = {{"x", 10}, {"y", 20}};
+store.set<std::map<std::string, int64_t>>("db/m", stl);
+
+// Read with akasha::map
+auto pm = store.get<akasha::map<std::string, int64_t>>("db/m");
+if (pm) std::cout << pm->at("x");   // 10
+
+// Copy akasha::map → std::map
+auto copy = store.get<std::map<std::string, int64_t>>("db/m");
+```
+
+#### Persistence Across Sessions
+
+```cpp
+// Session 1
+{
+    akasha::Store store;
+    store.load("db", "/tmp/data.db", akasha::FileOptions::create_if_missing);
+    akasha::map<std::string, double> m(store, "db/scores");
+    m.insert("alice", 9.5);
+    m.insert("bob",   8.0);
+    store.unload("db");
+}
+
+// Session 2
+{
+    akasha::Store store;
+    store.load("db", "/tmp/data.db");
+    akasha::map<std::string, double> m(store, "db/scores");
+    // m.size() == 2, m.at("alice") == 9.5
+}
 ```
 
 ---

@@ -254,9 +254,6 @@ public:
 	template<typename T>
 		requires (std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, std::int64_t>)
 	[[nodiscard]] Status set(std::string_view key_path, T value) {
-		if constexpr (std::is_unsigned_v<T> && sizeof(T) >= sizeof(std::int64_t)) {
-			if (detail::int64_overflow(value)) return Status::type_error;
-		}
 		return set<std::int64_t>(key_path, static_cast<std::int64_t>(value));
 	}
 

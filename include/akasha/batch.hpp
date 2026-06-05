@@ -53,6 +53,7 @@ protected:
     Store& store_;
     Store::Source* source_{nullptr};
     std::string dataset_id_;
+    std::string root_key_;
     std::unique_lock<detail::FileLockMutex> file_lock_;
     mutable std::stack<std::string> key_stack_;
 
@@ -69,6 +70,10 @@ public:
     void lock();
     void unlock();
     [[nodiscard]] bool is_locked() const noexcept { return static_cast<bool>(file_lock_); }
+
+    [[nodiscard]] Store& store() noexcept { return store_; }
+    [[nodiscard]] const Store& store() const noexcept { return store_; }
+    [[nodiscard]] std::string_view root_key() const noexcept { return root_key_; }
 
     /**
      * @brief Indicates if the relative path exists within this view.
@@ -126,9 +131,6 @@ public:
     template<typename T>
         requires (std::is_integral_v<T> && !std::is_same_v<T, bool>)
     [[nodiscard]] Status set(std::string_view k, const T& v) {
-        if constexpr (std::is_unsigned_v<T> && sizeof(T) >= sizeof(std::int64_t)) {
-            if (detail::int64_overflow(v)) return Status::type_error;
-        }
         auto e = detail::encode_int64(static_cast<std::int64_t>(v));
         return set_raw(k, e.ptr(), e.size, e.tag);
     }

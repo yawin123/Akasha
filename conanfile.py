@@ -6,7 +6,7 @@ import yaml
 
 class AkashaConan(ConanFile):
     name = "akasha"
-    version = "2.0.0"
+    version = "2.1.0"
     description = "High-performance hierarchical data store with memory-mapped file persistence"
     url = "https://github.com/yawin123/Akasha"
     license = "MIT"
@@ -22,6 +22,7 @@ class AkashaConan(ConanFile):
         "build_examples": False,
         "build_single_archive": False,
         "thread_safe": False,
+        "boost/*:without_locale": True,  # evita dependencia transitiva de libiconv (no accesible en CI macOS)
     }
     
     exports_sources = "src/*", "include/*", "cmake/*", "CMakeLists.txt", "conandata.yml"
@@ -29,7 +30,7 @@ class AkashaConan(ConanFile):
     generators = "CMakeDeps", "CMakeToolchain"
 
     def requirements(self):
-        self.requires("boost/1.90.0")
+        self.requires("boost/1.91.0")
     
     def generate(self):
         conandata_file = os.path.join(self.recipe_folder, "conandata.yml")

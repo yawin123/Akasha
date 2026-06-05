@@ -147,6 +147,7 @@ Full documentation in [include/akasha.hpp](include/akasha.hpp).
 - **Strings**: `std::string`
 - **Sequential containers** (built-in): `std::vector<T>`, `std::list<T>`, `std::set<T>`, `std::unordered_set<T>`, `std::array<T,N>`
 - **Key-value containers** (built-in): `std::map<K,V>`, `std::unordered_map<K,V>` — keys must be `std::string` or any arithmetic type
+- **Persistent containers**: `akasha::vector<T>`, `akasha::map<K,V>` — element-by-element access directly on the store; interoperable with their STL equivalents
 - **Custom Structs**: Any type implementing `akasha::Serializable<T>` specialization
 - **Cross-container**: any sequential container can be stored and retrieved as a different sequential container (`vector` → `set`, `array` → `list`, etc.); same for key-value containers (`map` ↔ `unordered_map`)
 
