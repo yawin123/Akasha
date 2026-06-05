@@ -45,6 +45,7 @@
  */
 
 #include "akasha/core.hpp"
+#include "akasha/detail/type_conversion.hpp"
 
 #include <cstdint>
 #include <string>
@@ -85,13 +86,20 @@ namespace akasha {
     template <typename T>
     struct has_tuple_size<T, std::void_t<decltype(std::tuple_size<T>::value)>> : std::true_type {};
 
-    // Especialización genérica: iterable, no mapa, no array (tamaño fijo), no string
+    template <typename T, typename = void>
+    struct has_akasha_container_tag : std::false_type {};
+
+    template <typename T>
+    struct has_akasha_container_tag<T, std::void_t<typename T::akasha_container_tag>> : std::true_type {};
+
+    // Especialización genérica: iterable, no mapa, no array (tamaño fijo), no string, no akasha container
     template <typename T>
     struct SequentialSerializable<T, std::enable_if_t<
         is_iterable_v<T> &&
         !has_mapped_type<T>::value &&
         !has_tuple_size<T>::value &&
-        !std::is_same_v<T, std::string>
+        !std::is_same_v<T, std::string> &&
+        !has_akasha_container_tag<T>::value
     >> {
         using ElementType = typename T::value_type;
 
@@ -156,40 +164,20 @@ namespace akasha {
         }
     };
 
-    // ── Helpers de conversión de clave de mapa ────────────────────────────────
-    template<typename K>
-    std::string map_key_to_string(const K& k) {
-        if constexpr (std::is_same_v<K, std::string>) {
-            return k;
-        } else {
-            return std::to_string(k);
-        }
-    }
-
-    template<typename K>
-    K string_to_map_key(const std::string& s) {
-        if constexpr (std::is_same_v<K, std::string>) {
-            return s;
-        } else if constexpr (std::is_integral_v<K> && std::is_signed_v<K>) {
-            return static_cast<K>(std::stoll(s));
-        } else if constexpr (std::is_integral_v<K> && std::is_unsigned_v<K>) {
-            return static_cast<K>(std::stoull(s));
-        } else if constexpr (std::is_floating_point_v<K>) {
-            return static_cast<K>(std::stod(s));
-        }
-    }
-
     // Especialización genérica para contenedores con mapped_type (map, unordered_map, ...)
+    // Excluye akasha::map que tiene su propia especialización explícita.
     template <typename T>
     struct ArbitrarySerializable<T, std::enable_if_t<
-        is_iterable_v<T> && has_mapped_type<T>::value
+        is_iterable_v<T> &&
+        has_mapped_type<T>::value &&
+        !has_akasha_container_tag<T>::value
     >> {
         using KeyType    = typename T::key_type;
         using MappedType = typename T::mapped_type;
 
         static void serialize(const T& m, BatchWriter& bw) {
             for (const auto& [k, v] : m) {
-                (void)bw.set<MappedType>(map_key_to_string(k), v);
+                (void)bw.set<MappedType>(detail::map_key_to_string(k), v);
             }
         }
 
@@ -202,7 +190,7 @@ namespace akasha {
             for (const auto& child_key : children) {
                 auto val = br.get<MappedType>(child_key);
                 if (!val) return std::nullopt;
-                result[string_to_map_key<KeyType>(child_key)] = std::move(*val);
+                result[detail::string_to_map_key<KeyType>(child_key)] = std::move(*val);
             }
             return result;
         }
@@ -211,7 +199,7 @@ namespace akasha {
             std::vector<std::string> ks;
             ks.reserve(m.size());
             for (const auto& [k, v] : m) {
-                ks.push_back(map_key_to_string(k));
+                ks.push_back(detail::map_key_to_string(k));
             }
             return ks;
         }

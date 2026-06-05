@@ -20,6 +20,8 @@
  * - DatasetView: read-only navigation through tree nodes
  * - BatchWriter/BatchReader: transactional bulk operations
  * - Serializable<T>: user-defined type support
+ * - StoreRef<T>: mutable proxy for a typed value in a Store
+ * - akasha::vector<T>: persistent vector backed by a Store
  *
  * Included headers (in dependency order):
  * - core.hpp: fundamental types
@@ -27,6 +29,11 @@
  * - batch.hpp: BatchWriter and BatchReader
  * - store_serializable.hpp: custom type support
  * - stl_serialization.hpp: std::vector<T> support
+ * - structs/container.hpp: akasha::container base class and IsAkashaContainer concept
+ * - structs/iterators.hpp: detail::IndexIterator generic template
+ * - structs/store_ref.hpp: StoreRef<T> mutable proxy
+ * - structs/vector.hpp: akasha::vector<T>
+ * - structs/map.hpp: akasha::map<K,V>
  */
 
 #include "akasha/core.hpp"
@@ -34,3 +41,8 @@
 #include "akasha/batch.hpp"
 #include "akasha/detail/store_serializable.hpp"
 #include "akasha/detail/stl_serialization.hpp"
+#include "akasha/structs/container.hpp"
+#include "akasha/structs/iterators.hpp"
+#include "akasha/structs/store_ref.hpp"
+#include "akasha/structs/vector.hpp"
+#include "akasha/structs/map.hpp"

@@ -95,8 +95,12 @@ template<typename T>
     std::memcpy(&stored, raw.data(), sizeof(std::int64_t));
     if constexpr (!std::is_same_v<T, std::int64_t>) {
         if constexpr (std::is_unsigned_v<T>) {
-            if (stored < 0 || static_cast<std::uint64_t>(stored) > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
-                return std::nullopt;
+            if constexpr (sizeof(T) < sizeof(std::int64_t)) {
+                // Tipos unsigned más pequeños: el valor almacenado debe ser no negativo y dentro de rango
+                if (stored < 0 || static_cast<std::uint64_t>(stored) > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))
+                    return std::nullopt;
+            }
+            // uint64_t (ancho completo): bit-cast, todos los patrones de bits son válidos
         } else {
             if (stored < static_cast<std::int64_t>(std::numeric_limits<T>::min()) ||
                 stored > static_cast<std::int64_t>(std::numeric_limits<T>::max()))
@@ -130,6 +134,31 @@ template<typename T>
     requires (std::is_unsigned_v<T> && sizeof(T) >= sizeof(std::int64_t))
 [[nodiscard]] constexpr bool int64_overflow(T v) noexcept {
     return v > static_cast<T>(std::numeric_limits<std::int64_t>::max());
+}
+
+// ── Helpers de conversión de clave de mapa ────────────────────────────────
+template<typename K>
+std::string map_key_to_string(const K& k) {
+    if constexpr (std::is_same_v<K, std::string>) {
+        return k;
+    } else {
+        return std::to_string(k);
+    }
+}
+
+template<typename K>
+K string_to_map_key(const std::string& s) {
+    if constexpr (std::is_same_v<K, std::string>) {
+        return s;
+    } else if constexpr (std::is_integral_v<K> && std::is_signed_v<K> && !std::is_same_v<K, bool>) {
+        return static_cast<K>(std::stoll(s));
+    } else if constexpr (std::is_integral_v<K> && std::is_unsigned_v<K> && !std::is_same_v<K, bool>) {
+        return static_cast<K>(std::stoull(s));
+    } else if constexpr (std::is_floating_point_v<K>) {
+        return static_cast<K>(std::stod(s));
+    } else {
+        static_assert(!std::is_same_v<K, K>, "Unsupported key type for akasha::map");
+    }
 }
 
 }  // namespace akasha::detail
