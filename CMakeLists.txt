@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(Akasha VERSION 2.0.0 LANGUAGES CXX)
+project(Akasha VERSION 2.1.0 LANGUAGES CXX)
 
 # Options can be set from CMake or from Conan
 option(BUILD_EXAMPLE "Build example application" OFF)
@@ -51,6 +51,20 @@ endif()
 
 if(BUILD_EXAMPLE)
     # Teaching examples demonstrating API capabilities
+
+    set(_nlohmann_header "${CMAKE_BINARY_DIR}/nlohmann_json/include/nlohmann/json.hpp")
+    if(NOT EXISTS "${_nlohmann_header}")
+        message(STATUS "Descargando nlohmann/json...")
+        file(DOWNLOAD
+            "https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp"
+            "${_nlohmann_header}"
+            STATUS _dl_status
+        )
+        list(GET _dl_status 0 _dl_code)
+        if(NOT _dl_code EQUAL 0)
+            message(FATAL_ERROR "Falló la descarga de nlohmann/json: ${_dl_status}")
+        endif()
+    endif()
     
     # 1. Quick start: basic load, set, get, getorset, unload
     add_executable(akasha_quickstart examples/quickstart.cpp)
@@ -100,6 +114,10 @@ if(BUILD_EXAMPLE)
     add_executable(akasha_json_roundtrip examples/json_roundtrip.cpp)
     target_include_directories(akasha_json_roundtrip PRIVATE "${CMAKE_BINARY_DIR}/nlohmann_json/include")
     target_link_libraries(akasha_json_roundtrip PRIVATE akasha::akasha)
+
+    # 13. akasha::vector<T>: persistent vector backed by a Store
+    add_executable(akasha_vector_example examples/vector_example.cpp)
+    target_link_libraries(akasha_vector_example PRIVATE akasha::akasha)
     
     # Reset BUILD_EXAMPLE to OFF after processing so next build doesn't compile examples
     set(BUILD_EXAMPLE OFF CACHE BOOL "Build example application" FORCE)
@@ -110,13 +128,15 @@ if(BUILD_TESTS)
     # All test files are included from basic_tests.cpp to ensure proper initialization
     add_executable(akasha_tests tests/basic_tests.cpp)
     target_link_libraries(akasha_tests PRIVATE akasha::akasha)
-    target_include_directories(akasha_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_BINARY_DIR}/simple-test-framework)
+    target_compile_features(akasha_tests PRIVATE cxx_std_23)
+    target_include_directories(akasha_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_BINARY_DIR}/simple-test-framework ${CMAKE_BINARY_DIR}/simple-test-framework/include)
 endif()
 
 if(BUILD_BENCHMARKS)
     # Benchmark suite using SBF (Simple Benchmark Framework)
     add_executable(akasha_benchmarks benchmarks/benchmark_main.cpp)
     target_link_libraries(akasha_benchmarks PRIVATE akasha::akasha)
+    target_compile_features(akasha_benchmarks PRIVATE cxx_std_23)
     target_include_directories(akasha_benchmarks PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/benchmarks ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include ${CMAKE_BINARY_DIR}/simple-benchmark-framework/include/scf/include)
 endif()
 

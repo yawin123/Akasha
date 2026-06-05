@@ -20,9 +20,12 @@
 #include "test_structs.cpp"         //Struct storage: same type, mixed types, many members
 #include "test_rfc8259.cpp"         //RFC 8259 complete JSON model coverage
 #include "test_edge_cases.cpp"      //Edge cases: reallocation, extremes, large values, fragmentation
+#include "test_akasha_vector.cpp"   //akasha::vector<T>: persistent vector, set/get interop
+#include "test_akasha_map.cpp"      //akasha::map<K,V>: persistent map, set/get interop
 
 int main() {
     std::cout << "Running Akasha Test Suite...\n";
+    stf::run_all_tests();
     stf::print_summary();
     return stf::exit_code();
 }
