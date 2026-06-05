@@ -9,7 +9,11 @@
 #include <filesystem>
 #include <atomic>
 #include <string>
+#ifdef _WIN32
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -25,7 +29,13 @@ private:
     // Helper to generate a unique filename
     static std::string generate_unique_path(const std::string& suffix) {
         static std::atomic<int> counter{0};
-		return std::format("{}/akasha_benchmark_{}_{}{}", tmpPath, getpid(), counter++, suffix);
+		return std::format("{}/akasha_benchmark_{}_{}{}", tmpPath,
+#ifdef _WIN32
+			_getpid(),
+#else
+			getpid(),
+#endif
+			counter++, suffix);
     }
 
 public:

@@ -137,9 +137,12 @@ TEST(typeandsize_generic_overflow_and_range) {
 	akasha::Store store;
 	ASSERT_EQ(store.load("db", temp.path(), akasha::FileOptions::create_if_missing), akasha::Status::ok);
 
-	// uint64_t overflow → type_error
+	// uint64_t > INT64_MAX → se almacena y recupera correctamente (bit-cast)
 	uint64_t huge = static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1;
-	ASSERT_EQ(store.set<uint64_t>("db/huge", huge), akasha::Status::type_error);
+	ASSERT_EQ(store.set<uint64_t>("db/huge", huge), akasha::Status::ok);
+	auto retrieved_huge = store.get<uint64_t>("db/huge");
+	ASSERT_TRUE(retrieved_huge.has_value());
+	ASSERT_EQ(*retrieved_huge, huge);
 
 	// Large int64_t → doesn't fit in int32 → nullopt
 	ASSERT_EQ(store.set<int64_t>("db/big", INT64_C(5000000000)), akasha::Status::ok);

@@ -14,6 +14,11 @@ BatchStruct::BatchStruct(const Store& store, std::string_view key_prefix) : stor
     std::string subkey_prefix_ = std::string(sp);
 
     key_stack_.push(subkey_prefix_);
+    root_key_ = dataset_id_;
+    if (!subkey_prefix_.empty()) {
+        root_key_ += '/';
+        root_key_ += subkey_prefix_;
+    }
 
     // Acquire sources_mutex (shared) + find source + acquire file lock (exclusive)
     {
