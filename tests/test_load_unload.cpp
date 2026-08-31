@@ -80,3 +80,111 @@ TEST(loadunload_multiple_datasets_in_store) {
     auto retrieved_config = store.get<int64_t>("config/version");
     ASSERT_EQ(retrieved_config.value(), config_version);
 }
+
+TEST(loadunload_clear_in_memory) {
+    TempFile temp;
+    akasha::Store store;
+    ASSERT_EQ((store.load("data", temp.path(), akasha::FileOptions::create_if_missing)), 
+        akasha::Status::ok);
+    
+    // Set an unordered_map
+    std::unordered_map<std::string, int64_t> user_map;
+    user_map["alice"] = 100;
+    user_map["bob"] = 200;
+    ASSERT_EQ((store.set<std::unordered_map<std::string, int64_t>>("data/users", user_map)), 
+        akasha::Status::ok);
+    
+    // Verify it exists
+    ASSERT_TRUE(store.has("data/users"));
+    auto users_before = (store.get<std::unordered_map<std::string, int64_t>>("data/users"));
+    ASSERT_TRUE(users_before.has_value());
+    ASSERT_SIZE(users_before.value(), size_t(2));
+    
+    // Clear it
+    ASSERT_EQ(store.clear("data/users"), akasha::Status::ok);
+    
+    // Verify it's gone (still in same session, in-memory)
+    ASSERT_FALSE(store.has("data/users"));
+    
+    auto users_after = (store.get<std::unordered_map<std::string, int64_t>>("data/users"));
+    ASSERT_FALSE(users_after.has_value());
+}
+
+TEST(loadunload_clear_persists_after_unload_reload) {
+    TempFile temp;
+    // ─ First session: write multiple data types and then clear one ──────────
+    {
+        akasha::Store store;
+        ASSERT_EQ((store.load("data", temp.path(), akasha::FileOptions::create_if_missing)), 
+            akasha::Status::ok);
+        
+        // Set a scalar value
+        ASSERT_EQ((store.set<int64_t>("data/config/port", 8080)), akasha::Status::ok);
+        ASSERT_EQ((store.set<std::string>("data/config/host", "localhost")), akasha::Status::ok);
+        
+        // Set an unordered_map
+        std::unordered_map<std::string, int64_t> user_map;
+        user_map["alice"] = 100;
+        user_map["bob"] = 200;
+        user_map["charlie"] = 300;
+        ASSERT_EQ((store.set<std::unordered_map<std::string, int64_t>>("data/users", user_map)), 
+            akasha::Status::ok);
+        
+        // Set another scalar value
+        ASSERT_EQ((store.set<std::string>("data/version", "1.0.0")), akasha::Status::ok);
+        
+        // Verify all data exists before clearing
+        ASSERT_TRUE(store.has("data/config/port"));
+        ASSERT_TRUE(store.has("data/config/host"));
+        ASSERT_TRUE(store.has("data/users"));
+        ASSERT_TRUE(store.has("data/version"));
+        
+        auto users_before = (store.get<std::unordered_map<std::string, int64_t>>("data/users"));
+        ASSERT_TRUE(users_before.has_value());
+        ASSERT_SIZE(users_before.value(), size_t(3));
+        
+        // Also set some nested scalar values under data/config
+        ASSERT_EQ(store.clear("data/config/host"), akasha::Status::ok);
+        
+        // Clear the unordered_map (delete "data/users" and all its children)
+        ASSERT_EQ(store.clear("data/users"), akasha::Status::ok);
+        
+        // Verify cleared data is gone but other data persists in this session
+        ASSERT_FALSE(store.has("data/users"));
+        ASSERT_FALSE(store.has("data/config/host"));
+        ASSERT_TRUE(store.has("data/config/port"));
+        ASSERT_TRUE(store.has("data/version"));
+        
+        // Unload to persist changes
+        ASSERT_EQ(store.unload("data"), akasha::Status::ok);
+    }
+    
+    // ─ Second session: reload and verify the deletion persisted ────────────
+    {
+        akasha::Store store;
+        ASSERT_EQ((store.load("data", temp.path(), akasha::FileOptions::none)), 
+            akasha::Status::ok);
+        
+        // Verify cleared keys are still gone after reload
+        ASSERT_FALSE(store.has("data/users"));
+        ASSERT_FALSE(store.has("data/config/host"));
+        
+        auto users_after = (store.get<std::unordered_map<std::string, int64_t>>("data/users"));
+        ASSERT_FALSE(users_after.has_value());
+        
+        auto host_after = (store.get<std::string>("data/config/host"));
+        ASSERT_FALSE(host_after.has_value());
+        
+        // Verify surviving data is still there
+        ASSERT_TRUE(store.has("data/config/port"));
+        ASSERT_TRUE(store.has("data/version"));
+        
+        auto port = (store.get<int64_t>("data/config/port"));
+        ASSERT_TRUE(port.has_value());
+        ASSERT_EQ(port.value(), 8080);
+        
+        auto version = (store.get<std::string>("data/version"));
+        ASSERT_TRUE(version.has_value());
+        ASSERT_EQ(version.value(), "1.0.0");
+    }
+}
