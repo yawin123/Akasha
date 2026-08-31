@@ -290,78 +290,62 @@ void Store::clear_no_lock(Source* source, std::string_view subkey) {
 
 // ── clear ────────────────────────────────────────────────────────────────────
 
-Status Store::clear(std::string_view key_path) {
-    std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
+Status Store::clear(std::string_view key_path, bool compact_after) {
+    std::string dataset_to_compact;
+    
+    {
+        std::unique_lock<detail::FileLockMutex> sources_guard(sources_mutex_);
 
-    if (key_path.empty()) {
-        std::unordered_set<std::string> processed_paths;
+        if (key_path.empty()) {
+            std::unordered_set<std::string> processed_paths;
 
-        for (const Source& source : sources_) {
-            if (!source.storage || !source.dataset_map || !source.file_lock) {
+            for (const Source& source : sources_) {
+                if (!source.storage || !source.dataset_map || !source.file_lock) {
+                    return last_status_ = Status::file_write_error;
+                }
+
+                if (!processed_paths.insert(source.file_path).second) {
+                    continue;
+                }
+
+                std::unique_lock<detail::FileLockMutex> write_guard(*source.file_lock);
+                auto* map = as_dataset_map(source.dataset_map);
+                map->clear();
+            }
+
+            dataset_to_compact = "";  // Empty = all datasets
+        } else {
+            auto key_parts = parse_key_path(key_path);
+            if (!key_parts.has_value()) {
+                return last_status_ = Status::invalid_key_path;
+            }
+
+            const auto& [dataset_id, subkey] = key_parts.value();
+            Source* source = find_source(dataset_id);
+            if (source == nullptr) {
+                return last_status_ = Status::dataset_not_found;
+            }
+
+            if (!source->storage || !source->dataset_map || !source->file_lock) {
                 return last_status_ = Status::file_write_error;
             }
 
-            if (!processed_paths.insert(source.file_path).second) {
-                continue;
+            std::unique_lock<detail::FileLockMutex> write_guard(*source->file_lock);
+            auto* map = as_dataset_map(source->dataset_map);
+
+            if (subkey == std::string_view("__root__")) {
+                map->clear();
+            } else {
+                clear_no_lock(source, subkey);
             }
 
-            std::unique_lock<detail::FileLockMutex> write_guard(*source.file_lock);
-            auto* map = as_dataset_map(source.dataset_map);
-            map->clear();
-
-            if (!source.storage->file.flush()) {
-                return last_status_ = Status::file_write_error;
-            }
-
-            if (!shrink_and_remap_sources_for_path(source.file_path)) {
-                return last_status_ = Status::file_write_error;
-            }
+            dataset_to_compact = std::string(dataset_id);
         }
+    }  // Release sources_guard here before calling compact()
 
-        return last_status_ = Status::ok;
-    }
-
-    auto key_parts = parse_key_path(key_path);
-    if (!key_parts.has_value()) {
-        return last_status_ = Status::invalid_key_path;
-    }
-
-    const auto& [dataset_id, subkey] = key_parts.value();
-    Source* source = find_source(dataset_id);
-    if (source == nullptr) {
-        return last_status_ = Status::dataset_not_found;
-    }
-
-    if (!source->storage || !source->dataset_map || !source->file_lock) {
-        return last_status_ = Status::file_write_error;
-    }
-
-    std::unique_lock<detail::FileLockMutex> write_guard(*source->file_lock);
-    auto* map = as_dataset_map(source->dataset_map);
-
-    if (subkey == std::string_view("__root__")) {
-        map->clear();
-        if (!source->storage->file.flush()) {
-            return last_status_ = Status::file_write_error;
-        }
-
-        if (!shrink_and_remap_sources_for_path(source->file_path)) {
-            return last_status_ = Status::file_write_error;
-        }
-
-        return last_status_ = Status::ok;
-    }
-
-    clear_no_lock(source, subkey);
-
-    if (!source->storage->file.flush()) {
-        return last_status_ = Status::file_write_error;
-    }
-
-    if (map->empty()) {
-        if (!shrink_and_remap_sources_for_path(source->file_path)) {
-            return last_status_ = Status::file_write_error;
-        }
+    // If requested, compact the file(s) to reclaim space
+    if (compact_after) {
+        return compact(dataset_to_compact);
     }
 
     return last_status_ = Status::ok;

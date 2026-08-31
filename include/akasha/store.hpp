@@ -323,8 +323,13 @@ public:
 	 * - If key_path is empty, deletes all data from all loaded datasets.
 	 * - If key_path includes only dataset (e.g. "user"), deletes all data in that dataset.
 	 * - If key_path includes subkey (e.g. "user.core"), deletes that key and its entire subtree.
+	 *
+	 * @param key_path Complete path (dataset or dataset/subkey). Empty = all datasets.
+	 * @param compact_after If true, compacts the file(s) after clearing to reclaim space (default: false).
+	 *                      Useful when clearing large amounts of data and you want to reduce file size immediately.
+	 * @return Status::ok on success, or error status.
 	 */
-	[[nodiscard]] Status clear(std::string_view key_path = {});
+	[[nodiscard]] Status clear(std::string_view key_path = {}, bool compact_after = false);
 
 	/**
 	 * @brief Compacts the mapped file for a dataset or all of them.

@@ -182,6 +182,9 @@ namespace akasha {
         }
 
         static std::optional<T> deserialize(const BatchReader& br) {
+            // If __children__ marker doesn't exist, this path was never written as a map
+            if (!br.has("__children__")) return std::nullopt;
+            
             auto children = br.get_children();
             T result;
             if constexpr (requires(T& c) { c.reserve(std::size_t{}); }) {
